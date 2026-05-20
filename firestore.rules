@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /employees/{employeeId} {
+      allow read: if signedIn();
+      allow create, update, delete: if signedIn();
+    }
+
+    match /records/{recordId} {
+      allow read: if signedIn();
+      allow create, update, delete: if signedIn();
+    }
+
+    match /settings/{settingId} {
+      allow read: if signedIn();
+      allow write: if signedIn();
+    }
+
+    match /auditLogs/{logId} {
+      allow read, create: if signedIn();
+      allow update, delete: if false;
+    }
+  }
+}
