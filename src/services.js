@@ -17,6 +17,8 @@ import { initialEmployees, initialRecords } from "./data.js";
 const EMPLOYEE_KEY = "juan_workbench_employees";
 const RECORD_KEY = "juan_workbench_records";
 
+const localSubscribers = new Set();
+
 function loadLocal(key, fallback) {
   try {
     const saved = localStorage.getItem(key);
@@ -32,6 +34,17 @@ function saveLocal(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+function emitLocalSnapshot() {
+  const snapshot = loadLocalSnapshot();
+  localSubscribers.forEach((listener) => {
+    try {
+      listener(snapshot);
+    } catch {
+      // Ignore listener errors.
+    }
+  });
+}
+
 export function loadLocalSnapshot() {
   return {
     employees: loadLocal(EMPLOYEE_KEY, initialEmployees),
@@ -42,7 +55,10 @@ export function loadLocalSnapshot() {
 export function subscribeData(onData, onError) {
   if (!firebaseReady || !db) {
     onData(loadLocalSnapshot());
-    return () => {};
+    localSubscribers.add(onData);
+    return () => {
+      localSubscribers.delete(onData);
+    };
   }
 
   let employees = [];
@@ -84,6 +100,7 @@ export async function seedInitialData() {
   if (!firebaseReady || !db) {
     saveLocal(EMPLOYEE_KEY, initialEmployees);
     saveLocal(RECORD_KEY, initialRecords());
+    emitLocalSnapshot();
     return;
   }
 
@@ -102,6 +119,7 @@ export async function addRecord(record) {
   if (!firebaseReady || !db) {
     const current = loadLocal(RECORD_KEY, initialRecords());
     saveLocal(RECORD_KEY, [{ ...record, id: `local-${Date.now()}` }, ...current]);
+    emitLocalSnapshot();
     return;
   }
   await addDoc(collection(db, "records"), { ...record, createdAt: serverTimestamp() });
@@ -113,6 +131,7 @@ export async function saveEmployee(employee) {
     const exists = current.some((item) => item.id === employee.id);
     const next = exists ? current.map((item) => (item.id === employee.id ? employee : item)) : [...current, employee];
     saveLocal(EMPLOYEE_KEY, next);
+    emitLocalSnapshot();
     return;
   }
   await setDoc(doc(db, "employees", employee.id), employee, { merge: true });
@@ -122,6 +141,7 @@ export async function removeEmployee(employeeId) {
   if (!firebaseReady || !db) {
     const current = loadLocal(EMPLOYEE_KEY, initialEmployees);
     saveLocal(EMPLOYEE_KEY, current.filter((item) => item.id !== employeeId));
+    emitLocalSnapshot();
     return;
   }
   await deleteDoc(doc(db, "employees", employeeId));
@@ -131,6 +151,7 @@ export async function updateRecord(recordId, patch) {
   if (!firebaseReady || !db) {
     const current = loadLocal(RECORD_KEY, initialRecords());
     saveLocal(RECORD_KEY, current.map((item) => (item.id === recordId ? { ...item, ...patch } : item)));
+    emitLocalSnapshot();
     return;
   }
   await updateDoc(doc(db, "records", recordId), patch);

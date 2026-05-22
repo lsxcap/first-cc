@@ -142,6 +142,24 @@ function ProductTypePicker({ value, onChange }) {
   );
 }
 
+function MetricInput({ label, unit, value, onChange, placeholder = "0" }) {
+  return (
+    <label className="form-field">
+      {label}
+      <div className="input-unit">
+        <input
+          type="number"
+          step="any"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+        />
+        <span>{unit}</span>
+      </div>
+    </label>
+  );
+}
+
 function AssessmentOverview() {
   const metricCards = [
     ["两融有效户", "权重25%", "上限150%", 85, 25, "green"],
@@ -212,6 +230,7 @@ function FillPage({ employees, onAddRecord }) {
   const [values, setValues] = useState({});
   const [emptyCount, setEmptyCount] = useState("");
   const [note, setNote] = useState("");
+  const [submitState, setSubmitState] = useState("idle"); // idle | submitting | success
   const selectedEmployee = employees.find((item) => item.id === employeeId);
   const fillRows = selectedEmployee ? indicatorRowsFor(selectedEmployee) : [];
   const marginKey = selectedEmployee?.group === "新人组" ? "twoMarginNew" : "twoMarginValid";
@@ -226,81 +245,73 @@ function FillPage({ employees, onAddRecord }) {
 
   async function submit(event) {
     event.preventDefault();
+    if (submitState === "submitting") return;
     const employee = employees.find((item) => item.id === employeeId);
     if (!employee) return;
     const created = [];
+    setSubmitState("submitting");
 
-    for (const row of fillRows) {
-      const rawValue = Number(values[row.key] || 0);
-      if (!rawValue) continue;
-      let finalValue = rawValue;
-      let detail = note;
+    try {
+      for (const row of fillRows) {
+        const rawValue = Number(values[row.key] || 0);
+        if (!rawValue) continue;
+        let finalValue = rawValue;
+        let detail = note;
 
-      if (row.key === "validAccount") {
-        const bonus = Math.min(Math.floor(Number(emptyCount || 0) / 10), 2);
-        finalValue += bonus;
-        if (bonus) detail = `${detail ? `${detail}；` : ""}空户折算+${bonus}`;
+        if (row.key === "validAccount") {
+          const bonus = Math.min(Math.floor(Number(emptyCount || 0) / 10), 2);
+          finalValue += bonus;
+          if (bonus) detail = `${detail ? `${detail}；` : ""}空户折算+${bonus}`;
+        }
+        if (row.key === "productSales") {
+          const coeff = { private: 1.5, public: 1, warrant: 0.8 }[productType] || 1;
+          finalValue *= coeff;
+          detail = `${detail ? `${detail}；` : ""}产品系数${coeff}`;
+        }
+
+        created.push(onAddRecord({
+          employeeId,
+          employeeName: employee.name,
+          date,
+          indicator: row.key,
+          value: finalValue,
+          rawValue,
+          extraPoints: 0,
+          note: detail
+        }));
       }
-      if (row.key === "productSales") {
-        const coeff = { private: 1.5, public: 1, warrant: 0.8 }[productType] || 1;
-        finalValue *= coeff;
-        detail = `${detail ? `${detail}；` : ""}产品系数${coeff}`;
+
+      const extraPoints = Number(values.extraT0 || 0);
+      if (extraPoints) {
+        created.push(onAddRecord({
+          employeeId,
+          employeeName: employee.name,
+          date,
+          indicator: "extraT0",
+          value: extraPoints,
+          rawValue: extraPoints,
+          extraPoints,
+          note
+        }));
       }
 
-      created.push(onAddRecord({
-        employeeId,
-        employeeName: employee.name,
-        date,
-        indicator: row.key,
-        value: finalValue,
-        rawValue,
-        extraPoints: 0,
-        note: detail
-      }));
+      if (!created.length) {
+        setSubmitState("idle");
+        return;
+      }
+      await Promise.all(created);
+      setValues({});
+      setEmptyCount("");
+      setNote("");
+      setSubmitState("success");
+      window.setTimeout(() => setSubmitState("idle"), 1500);
+    } catch {
+      setSubmitState("idle");
     }
-
-    const extraPoints = Number(values.extraT0 || 0);
-    if (extraPoints) {
-      created.push(onAddRecord({
-        employeeId,
-        employeeName: employee.name,
-        date,
-        indicator: "extraT0",
-        value: extraPoints,
-        rawValue: extraPoints,
-        extraPoints,
-        note
-      }));
-    }
-
-    if (!created.length) return;
-    await Promise.all(created);
-    setValues({});
-    setEmptyCount("");
-    setNote("");
   }
 
   function updateValue(key, value) {
     setValues((current) => ({ ...current, [key]: value }));
-  }
-
-  function MetricInput({ metricKey, placeholder = "0" }) {
-    if (!rowByKey[metricKey]) return null;
-    return (
-      <label className="form-field">
-        {rowByKey[metricKey].label}
-        <div className="input-unit">
-          <input
-            type="number"
-            step="any"
-            value={values[metricKey] || ""}
-            onChange={(event) => updateValue(metricKey, event.target.value)}
-            placeholder={placeholder}
-          />
-          <span>{indicatorUnits[metricKey]}</span>
-        </div>
-      </label>
-    );
   }
 
   return (
@@ -330,8 +341,22 @@ function FillPage({ employees, onAddRecord }) {
           <section className="form-section">
             <div className="form-section-title">核心业绩指标</div>
             <div className="performance-grid">
-              <MetricInput metricKey="newAsset" />
-              <MetricInput metricKey="investSign" />
+              {rowByKey.newAsset && (
+                <MetricInput
+                  label={rowByKey.newAsset.label}
+                  unit={indicatorUnits.newAsset}
+                  value={values.newAsset || ""}
+                  onChange={(value) => updateValue("newAsset", value)}
+                />
+              )}
+              {rowByKey.investSign && (
+                <MetricInput
+                  label={rowByKey.investSign.label}
+                  unit={indicatorUnits.investSign}
+                  value={values.investSign || ""}
+                  onChange={(value) => updateValue("investSign", value)}
+                />
+              )}
               {rowByKey.validAccount && (
                 <label className="form-field">
                   有效户 / 空户数
@@ -377,7 +402,14 @@ function FillPage({ employees, onAddRecord }) {
                   </div>
                 </label>
               )}
-              <MetricInput metricKey={marginKey} />
+              {rowByKey[marginKey] && (
+                <MetricInput
+                  label={rowByKey[marginKey].label}
+                  unit={indicatorUnits[marginKey]}
+                  value={values[marginKey] || ""}
+                  onChange={(value) => updateValue(marginKey, value)}
+                />
+              )}
               <label className="form-field">
                 额外加分
                 <div className="input-unit">
@@ -401,7 +433,12 @@ function FillPage({ employees, onAddRecord }) {
             </label>
           </section>
 
-          <button className="primary submit-wide">提交业绩记录</button>
+          <button
+            className={`primary submit-wide ${submitState === "success" ? "success" : ""}`}
+            disabled={submitState === "submitting" || submitState === "success"}
+          >
+            {submitState === "submitting" ? "提交中..." : submitState === "success" ? "✓ 提交成功" : "提交业绩记录"}
+          </button>
         </form>
       </section>
 
@@ -873,12 +910,23 @@ function MonthlyPage({ employees, records }) {
 }
 
 function ManagePage({ employees, onSaveEmployee, onRemoveEmployee, onSeed }) {
-  const [editing, setEditing] = useState(null);
+  const makeNewEmployee = () => ({
+    id: `e${Date.now()}`,
+    name: "",
+    group: "老人组",
+    targets: { validAccount: 7, newAsset: 100, investSign: 7, twoMarginValid: 1, productSales: 70, twoMarginNew: 0 }
+  });
+
+  const [editingEmployee, setEditingEmployee] = useState(null);
+  const [draftEmployee, setDraftEmployee] = useState(makeNewEmployee);
   const [unlocked, setUnlocked] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [saveState, setSaveState] = useState("idle"); // idle | saving | success
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
 
-  const employee = editing || { id: `e${Date.now()}`, name: "", group: "老人组", targets: { validAccount: 7, newAsset: 100, investSign: 7, twoMarginValid: 1, productSales: 70, twoMarginNew: 0 } };
+  const employee = editingEmployee || draftEmployee;
+  const isEditing = Boolean(editingEmployee);
   const rows = indicatorRowsFor(employee);
   const groups = ["老人组", "新人组"].map((group) => ({
     group,
@@ -890,16 +938,56 @@ function ManagePage({ employees, onSaveEmployee, onRemoveEmployee, onSeed }) {
     if (password === adminCode) {
       setUnlocked(true);
       setAuthError("");
+      setFormOpen(false);
     } else {
       setAuthError("管理员口令不正确");
     }
   }
 
+  function lockManage() {
+    setUnlocked(false);
+    setPassword("");
+    setAuthError("");
+    setFormOpen(false);
+    setEditingEmployee(null);
+    setDraftEmployee(makeNewEmployee());
+    setSaveState("idle");
+  }
+
+  function openCreate() {
+    setEditingEmployee(null);
+    setDraftEmployee(makeNewEmployee());
+    setSaveState("idle");
+    setFormOpen(true);
+  }
+
+  function openEdit(item) {
+    setEditingEmployee(structuredClone(item));
+    setSaveState("idle");
+    setFormOpen(true);
+  }
+
+  function closeForm() {
+    setFormOpen(false);
+    setEditingEmployee(null);
+    setDraftEmployee(makeNewEmployee());
+    setSaveState("idle");
+  }
+
   async function save(event) {
     event.preventDefault();
     if (!unlocked) return;
-    await onSaveEmployee(employee);
-    setEditing(null);
+    if (saveState === "saving") return;
+    setSaveState("saving");
+    try {
+      await onSaveEmployee(employee);
+      setSaveState("success");
+      window.setTimeout(() => {
+        closeForm();
+      }, 1500);
+    } catch {
+      setSaveState("idle");
+    }
   }
 
   async function guardedSeed() {
@@ -920,7 +1008,13 @@ function ManagePage({ employees, onSaveEmployee, onRemoveEmployee, onSeed }) {
             <p className="eyebrow">管理区</p>
             <h2>员工与指标</h2>
           </div>
-          {unlocked && <button className="ghost" onClick={guardedSeed}>初始化样例</button>}
+          {unlocked && (
+            <div className="panel-actions">
+              <button className="ghost" onClick={openCreate}>新增员工</button>
+              <button className="ghost" onClick={guardedSeed}>初始化样例</button>
+              <button className="ghost" onClick={lockManage}>退出管理</button>
+            </div>
+          )}
         </div>
         {!unlocked && (
           <form className="admin-unlock" onSubmit={unlock}>
@@ -945,7 +1039,7 @@ function ManagePage({ employees, onSaveEmployee, onRemoveEmployee, onSeed }) {
                     <strong>{item.name}</strong>
                     {unlocked && (
                       <div className="row-actions">
-                        <button onClick={() => setEditing(structuredClone(item))}>编辑</button>
+                        <button onClick={() => openEdit(item)}>编辑</button>
                         <button onClick={() => guardedRemove(item.id)}>删除</button>
                       </div>
                     )}
@@ -956,12 +1050,25 @@ function ManagePage({ employees, onSaveEmployee, onRemoveEmployee, onSeed }) {
           ))}
         </div>
       </section>
-      {unlocked && <section className="panel">
-        <div className="panel-title"><h2>{editing ? "编辑员工" : "新增员工"}</h2></div>
+      {unlocked && formOpen && <section className="panel">
+        <div className="panel-title">
+          <h2>{isEditing ? "编辑员工" : "新增员工"}</h2>
+          <div className="panel-actions">
+            <button type="button" className="ghost" onClick={closeForm}>← 返回</button>
+          </div>
+        </div>
         <form className="form-grid" onSubmit={save}>
           <label>
             姓名
-            <input value={employee.name} onChange={(event) => setEditing({ ...employee, name: event.target.value })} required />
+            <input
+              value={employee.name}
+              onChange={(event) => {
+                const next = { ...employee, name: event.target.value };
+                if (isEditing) setEditingEmployee(next);
+                else setDraftEmployee(next);
+              }}
+              required
+            />
           </label>
           <label>
             组别
@@ -971,7 +1078,11 @@ function ManagePage({ employees, onSaveEmployee, onRemoveEmployee, onSeed }) {
                 { value: "新人组", label: "新人组", meta: "新员工" }
               ]}
               value={employee.group}
-              onChange={(group) => setEditing({ ...employee, group })}
+              onChange={(group) => {
+                const next = { ...employee, group };
+                if (isEditing) setEditingEmployee(next);
+                else setDraftEmployee(next);
+              }}
               placeholder="选择组别"
             />
           </label>
@@ -982,11 +1093,20 @@ function ManagePage({ employees, onSaveEmployee, onRemoveEmployee, onSeed }) {
                 type="number"
                 step="any"
                 value={employee.targets[row.key] || 0}
-                onChange={(event) => setEditing({ ...employee, targets: { ...employee.targets, [row.key]: Number(event.target.value || 0) } })}
+                onChange={(event) => {
+                  const next = { ...employee, targets: { ...employee.targets, [row.key]: Number(event.target.value || 0) } };
+                  if (isEditing) setEditingEmployee(next);
+                  else setDraftEmployee(next);
+                }}
               />
             </label>
           ))}
-          <button className="primary wide">保存</button>
+          <button
+            className={`primary wide ${saveState === "success" ? "success" : ""}`}
+            disabled={saveState === "saving" || saveState === "success"}
+          >
+            {saveState === "saving" ? "保存中..." : saveState === "success" ? "✓ 保存成功" : "保存"}
+          </button>
         </form>
       </section>}
     </div>
