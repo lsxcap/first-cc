@@ -1,5 +1,18 @@
 import { indicatorLabels, upperLimit, weights } from "../config/data.js";
 
+export const RULES = {
+  productSalesCoefficients: {
+    privateFund: 1.5,
+    publicFund: 1,
+    receipt: 0.8
+  },
+  emptyToValid: 10,
+  maxMonthlyEmptyConvert: 2,
+  newAccountScore: 5,
+  monthlySalesThreshold: 300,
+  monthlySalesReward: 5
+};
+
 export function todayString() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -18,16 +31,55 @@ export function buildEmployeeMap(employees) {
   return Object.fromEntries(employees.map((employee) => [employee.id, employee]));
 }
 
+function toNumber(value) {
+  return Number(value || 0);
+}
+
+export function calculateProductSales({ privateFund = 0, publicFund = 0, receipt = 0 }) {
+  return (
+    toNumber(privateFund) * RULES.productSalesCoefficients.privateFund +
+    toNumber(publicFund) * RULES.productSalesCoefficients.publicFund +
+    toNumber(receipt) * RULES.productSalesCoefficients.receipt
+  );
+}
+
+export function calculateDailyEffective({ validAccounts = 0, emptyAccounts = 0 }) {
+  const valid = toNumber(validAccounts);
+  const empty = toNumber(emptyAccounts);
+  const convertedFromEmpty = Math.floor(empty / RULES.emptyToValid);
+  return {
+    validAccounts: valid,
+    emptyAccounts: empty,
+    convertedFromEmpty,
+    dailyEffective: valid + convertedFromEmpty
+  };
+}
+
+function getRawValidAccounts(record) {
+  if (record.rawValue !== undefined) return toNumber(record.rawValue);
+  if (record.validAccounts !== undefined) return toNumber(record.validAccounts);
+  return toNumber(record.value);
+}
+
+function getConvertedFromEmpty(record) {
+  return toNumber(record.convertedFromEmpty);
+}
+
 export function summarizeDay(records, employees, date) {
   const employeeMap = buildEmployeeMap(employees);
   const dayRecords = records.filter((record) => record.date === date);
   const byIndicator = {};
   const byEmployee = {};
+  let dailyRulePoints = 0;
 
   for (const record of dayRecords) {
     byIndicator[record.indicator] = (byIndicator[record.indicator] || 0) + Number(record.value || 0);
     byEmployee[record.employeeId] = (byEmployee[record.employeeId] || 0) + Number(record.value || 0);
+    if (record.indicator === "validAccount") {
+      dailyRulePoints += Number(record.value || 0) * RULES.newAccountScore;
+    }
   }
+  byIndicator.extraT0 = (byIndicator.extraT0 || 0) + dailyRulePoints;
 
   return {
     records: dayRecords,
@@ -50,14 +102,26 @@ export function computeMonthlyStats(records, employees, yearMonth) {
       twoMarginNew: 0,
       extraPoints: 0
     };
+    let rawValidAccounts = 0;
+    let emptyConvertedAccounts = 0;
+    let dailyNewAccountPoints = 0;
 
     for (const record of monthlyRecords) {
       if (record.indicator === "extraT0") {
         actuals.extraPoints += Number(record.extraPoints || 0);
+      } else if (record.indicator === "validAccount") {
+        rawValidAccounts += getRawValidAccounts(record);
+        emptyConvertedAccounts += getConvertedFromEmpty(record);
+        dailyNewAccountPoints += toNumber(record.value) * RULES.newAccountScore;
       } else if (actuals[record.indicator] !== undefined) {
         actuals[record.indicator] += Number(record.value || 0);
       }
     }
+    actuals.validAccount = rawValidAccounts + Math.min(emptyConvertedAccounts, RULES.maxMonthlyEmptyConvert);
+
+    const monthlySalesReward = actuals.productSales >= RULES.monthlySalesThreshold ? RULES.monthlySalesReward : 0;
+    const rulePoints = dailyNewAccountPoints + monthlySalesReward;
+    actuals.extraPoints += rulePoints;
 
     const rates = {};
     const groupWeights = weights[employee.group] || {};
@@ -73,7 +137,12 @@ export function computeMonthlyStats(records, employees, yearMonth) {
       rates,
       overall,
       extraPoints: actuals.extraPoints,
-      finalPoints: actuals.extraPoints
+      finalPoints: actuals.extraPoints,
+      rewardBreakdown: {
+        dailyNewAccountPoints,
+        monthlySalesReward,
+        rulePoints
+      }
     };
   });
 }

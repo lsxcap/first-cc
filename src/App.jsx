@@ -4,22 +4,38 @@ import DailyDataPage from "./pages/DailyDataPage.jsx";
 import MonthlyPage from "./pages/MonthlyPage.jsx";
 import ManagePage from "./pages/ManagePage.jsx";
 import { initialEmployees, initialRecords } from "./config/data.js";
-import { firebaseReady, ensureAnonymousSession } from "./services/firebase.js";
+import { ensureAnonymousSession, firebaseReady } from "./services/firebase.js";
 import {
   addRecord,
   removeEmployee,
   removeRecordsByEmployeeDate,
   saveEmployee,
   seedInitialData,
-  subscribeData
+  subscribeData,
+  updateRecord
 } from "./services/dataService.js";
 import { useAdminSession } from "./hooks/useAdminSession.js";
+
+function AdminBadge({ adminUnlocked, adminLoginTime, onExit }) {
+  if (!adminUnlocked) return null;
+  const timeText = adminLoginTime ? new Date(adminLoginTime).toLocaleString("zh-CN", { hour12: false }) : "刚刚";
+
+  return (
+    <div className="admin-badge">
+      <div className="admin-badge-text">
+        <span>🛠 管理员模式</span>
+        <small>已登录：{timeText}</small>
+      </div>
+      <button type="button" className="ghost" onClick={onExit}>退出管理员模式</button>
+    </div>
+  );
+}
 
 export default function App() {
   const [data, setData] = useState({ employees: initialEmployees, records: initialRecords() });
   const [page, setPage] = useState("fill");
   const [error, setError] = useState("");
-  const { adminUnlocked, setAdminUnlocked } = useAdminSession();
+  const { isAdmin, adminLoginTime, setIsAdmin, exitAdminMode } = useAdminSession();
 
   useEffect(() => {
     let unsubscribe = () => {};
@@ -51,13 +67,14 @@ export default function App() {
         <div>
           <p className="eyebrow">刘娟的工作台</p>
         </div>
+        <AdminBadge adminUnlocked={isAdmin} adminLoginTime={adminLoginTime} onExit={exitAdminMode} />
       </header>
       {error && <div className="error banner">{error}</div>}
       <main className="content">
-        {page === "fill" && <FillPage employees={employees} records={records} onAddRecord={addRecord} onClearRecordsByDate={removeRecordsByEmployeeDate} adminUnlocked={adminUnlocked} />}
-        {page === "daily" && <DailyDataPage employees={employees} records={records} />}
-        {page === "monthly" && <MonthlyPage employees={employees} records={records} />}
-        {page === "manage" && <ManagePage employees={employees} onSaveEmployee={saveEmployee} onRemoveEmployee={removeEmployee} onSeed={seedInitialData} adminUnlocked={adminUnlocked} onAdminUnlockedChange={setAdminUnlocked} />}
+        {page === "fill" && <FillPage employees={employees} records={records} onAddRecord={addRecord} adminUnlocked={isAdmin} />}
+        {page === "daily" && <DailyDataPage employees={employees} records={records} isAdmin={isAdmin} onSetAdmin={setIsAdmin} onUpdateRecord={updateRecord} onRemoveRecordsByEmployeeDate={removeRecordsByEmployeeDate} />}
+        {page === "monthly" && <MonthlyPage employees={employees} records={records} isAdmin={isAdmin} onSetAdmin={setIsAdmin} />}
+        {page === "manage" && <ManagePage employees={employees} onSaveEmployee={saveEmployee} onRemoveEmployee={removeEmployee} onSeed={seedInitialData} isAdmin={isAdmin} onSetAdmin={setIsAdmin} onExitAdminMode={exitAdminMode} />}
       </main>
       <nav className="bottom-nav">
         <button className={page === "fill" ? "active" : ""} onClick={() => setPage("fill")}><span>填</span>今日填报</button>

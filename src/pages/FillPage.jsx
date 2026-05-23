@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { indicatorLabels, indicatorUnits } from "../config/data.js";
-import { indicatorRowsFor, todayString } from "../utils/metrics.js";
+import { calculateDailyEffective, calculateProductSales, indicatorRowsFor, todayString } from "../utils/metrics.js";
 import MetricInput from "../components/MetricInput.jsx";
 import OptionPicker from "../components/OptionPicker.jsx";
 
@@ -11,21 +11,6 @@ function EmployeePicker({ employees, value, onChange }) {
       value={value}
       onChange={onChange}
       placeholder="选择员工"
-    />
-  );
-}
-
-function ProductTypePicker({ value, onChange }) {
-  return (
-    <OptionPicker
-      options={[
-        { value: "private", label: "私募", meta: "1.5倍" },
-        { value: "public", label: "公募", meta: "1倍" },
-        { value: "warrant", label: "收凭", meta: "0.8倍" }
-      ]}
-      value={value}
-      onChange={onChange}
-      placeholder="选择产品类型"
     />
   );
 }
@@ -92,26 +77,58 @@ function AssessmentOverview() {
   );
 }
 
-export default function FillPage({ employees, records, onAddRecord, onClearRecordsByDate, adminUnlocked }) {
+export default function FillPage({ employees, records, onAddRecord, adminUnlocked }) {
   const today = todayString();
   const [employeeId, setEmployeeId] = useState(employees[0]?.id || "");
   const [date, setDate] = useState(today);
-  const [productType, setProductType] = useState("private");
   const [values, setValues] = useState({});
   const [emptyCount, setEmptyCount] = useState("");
   const [note, setNote] = useState("");
   const [submitState, setSubmitState] = useState("idle");
+  const [submitSuccessVisible, setSubmitSuccessVisible] = useState(false);
+
+  const submittedMap = useMemo(() => {
+    const map = {};
+    for (const record of records) {
+      const key = `${record.employeeId}_${record.date}`;
+      if (!map[key]) map[key] = record;
+    }
+    return map;
+  }, [records]);
+
+  const submittedEmployees = useMemo(() => new Set(
+    records.filter((record) => record.date === date).map((record) => record.employeeId)
+  ), [records, date]);
+
+  const pendingEmployees = useMemo(
+    () => employees.filter((employee) => !submittedEmployees.has(employee.id)),
+    [employees, submittedEmployees]
+  );
+
+  const sortedEmployees = useMemo(() => [
+    ...pendingEmployees,
+    ...employees.filter((employee) => submittedEmployees.has(employee.id))
+  ], [employees, pendingEmployees, submittedEmployees]);
+
+  const availableEmployees = sortedEmployees;
 
   const selectedEmployee = employees.find((item) => item.id === employeeId);
   const fillRows = selectedEmployee ? indicatorRowsFor(selectedEmployee) : [];
-  const hasSubmittedForDay = Boolean(records.some((record) => record.employeeId === employeeId && record.date === date));
-  const isLocked = hasSubmittedForDay && !adminUnlocked;
+  const currentRecord = submittedMap[`${employeeId}_${date}`];
+  const allSubmitted = employees.length > 0 && pendingEmployees.length === 0;
+  const isSubmittedEmployee = Boolean(currentRecord);
+  const isLocked = isSubmittedEmployee && !adminUnlocked;
+  const formReadOnly = isLocked || submitState === "submitting" || submitSuccessVisible;
   const marginKey = selectedEmployee?.group === "新人组" ? "twoMarginNew" : "twoMarginValid";
   const rowByKey = Object.fromEntries(fillRows.map((row) => [row.key, row]));
+  const getRowLabel = (key) => rowByKey[key]?.label || indicatorLabels[key];
 
   useEffect(() => {
-    if (!employeeId && employees[0]?.id) setEmployeeId(employees[0].id);
-  }, [employeeId, employees]);
+    const canKeepSelected = availableEmployees.some((employee) => employee.id === employeeId);
+    if (!canKeepSelected) {
+      setEmployeeId(availableEmployees[0]?.id || "");
+    }
+  }, [availableEmployees, employeeId]);
 
   async function submit(event) {
     event.preventDefault();
@@ -127,21 +144,34 @@ export default function FillPage({ employees, records, onAddRecord, onClearRecor
 
     try {
       for (const row of fillRows) {
-        const rawValue = Number(values[row.key] || 0);
-        if (!rawValue) continue;
+        let rawValue = Number(values[row.key] || 0);
         let finalValue = rawValue;
         let detail = note;
+        const extraRecordFields = {};
 
         if (row.key === "validAccount") {
-          const bonus = Math.min(Math.floor(Number(emptyCount || 0) / 10), 2);
-          finalValue += bonus;
-          if (bonus) detail = `${detail ? `${detail}；` : ""}空户折算+${bonus}`;
+          const dailyEffective = calculateDailyEffective({
+            validAccounts: values.validAccount,
+            emptyAccounts: emptyCount
+          });
+          rawValue = dailyEffective.validAccounts;
+          finalValue = dailyEffective.dailyEffective;
+          extraRecordFields.emptyAccounts = dailyEffective.emptyAccounts;
+          extraRecordFields.convertedFromEmpty = dailyEffective.convertedFromEmpty;
+          if (dailyEffective.convertedFromEmpty) detail = `${detail ? `${detail}；` : ""}空户折算+${dailyEffective.convertedFromEmpty}`;
         }
         if (row.key === "productSales") {
-          const coeff = { private: 1.5, public: 1, warrant: 0.8 }[productType] || 1;
-          finalValue *= coeff;
-          detail = `${detail ? `${detail}；` : ""}产品系数${coeff}`;
+          const privateFund = Number(values.privateFund || 0);
+          const publicFund = Number(values.publicFund || 0);
+          const receipt = Number(values.receipt || 0);
+          rawValue = privateFund + publicFund + receipt;
+          finalValue = calculateProductSales({ privateFund, publicFund, receipt });
+          extraRecordFields.privateFund = privateFund;
+          extraRecordFields.publicFund = publicFund;
+          extraRecordFields.receipt = receipt;
+          detail = `${detail ? `${detail}；` : ""}产品销售折算：私募${privateFund}，公募${publicFund}，收凭${receipt}`;
         }
+        if (!finalValue) continue;
 
         created.push(onAddRecord({
           employeeId,
@@ -151,7 +181,8 @@ export default function FillPage({ employees, records, onAddRecord, onClearRecor
           value: finalValue,
           rawValue,
           extraPoints: 0,
-          note: detail
+          note: detail,
+          ...extraRecordFields
         }));
       }
 
@@ -178,6 +209,14 @@ export default function FillPage({ employees, records, onAddRecord, onClearRecor
       setEmptyCount("");
       setNote("");
       setSubmitState("success");
+      setSubmitSuccessVisible(true);
+      const submittedEmployeeId = employeeId;
+      window.setTimeout(() => {
+        const nextEmployee = pendingEmployees.find((item) => item.id !== submittedEmployeeId);
+        setEmployeeId(nextEmployee?.id || submittedEmployeeId);
+        setSubmitSuccessVisible(false);
+        setSubmitState("idle");
+      }, 1400);
     } catch {
       setSubmitState("idle");
     }
@@ -187,20 +226,18 @@ export default function FillPage({ employees, records, onAddRecord, onClearRecor
     setValues((current) => ({ ...current, [key]: value }));
   }
 
-  async function clearTodayRecords() {
-    if (!adminUnlocked || !employeeId || !date) return;
-    if (!confirm("确认清除该员工当天填报记录并重新开放编辑？")) return;
-    await onClearRecordsByDate(employeeId, date);
-    setSubmitState("idle");
-  }
-
   const submitLabel = submitState === "submitting"
     ? "提交中..."
-    : isLocked
-      ? "✓ 已提交"
-      : submitState === "success"
-        ? "✓ 提交成功"
+    : submitSuccessVisible
+      ? `✓ ${selectedEmployee?.name || "该员工"}已提交`
+      : isSubmittedEmployee
+        ? "已提交"
+        : allSubmitted
+        ? "今日全部完成"
         : "提交业绩记录";
+
+  const selectedMeta = `待填写 ${pendingEmployees.length}/${employees.length}`;
+  const successHint = submitSuccessVisible ? "✓ 已提交，正在切换下一位" : "";
 
   return (
     <div className="page-grid">
@@ -210,105 +247,110 @@ export default function FillPage({ employees, records, onAddRecord, onClearRecor
             <p className="eyebrow">今日填报</p>
             <h2>新增业绩记录</h2>
           </div>
+          <div className="panel-actions">
+            <strong>{selectedMeta}</strong>
+            {successHint && <span className="admin-inline-tag">{successHint}</span>}
+          </div>
         </div>
         <form className="work-form" onSubmit={submit}>
-          <fieldset className="work-form-fieldset" disabled={isLocked}>
+          <fieldset className="work-form-fieldset" disabled={submitState === "submitting"}>
             <section className="form-section">
               <div className="form-section-title">基本信息</div>
               <div className="performance-grid">
                 <label className="form-field">
                   员工姓名
-                  <EmployeePicker employees={employees} value={employeeId} onChange={setEmployeeId} />
+                  <EmployeePicker employees={availableEmployees} value={employeeId} onChange={setEmployeeId} />
                 </label>
                 <label className="form-field">
                   记录日期
-                  <input type="date" value={date} onChange={(event) => setDate(event.target.value)} disabled={isLocked} />
+                  <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
                 </label>
               </div>
             </section>
+          </fieldset>
 
+          <fieldset className="work-form-fieldset" disabled={formReadOnly}>
             <section className="form-section">
               <div className="form-section-title">核心业绩指标</div>
               <div className="performance-grid">
-                {rowByKey.newAsset && (
-                  <MetricInput
-                    label={rowByKey.newAsset.label}
-                    unit={indicatorUnits.newAsset}
-                    value={values.newAsset || ""}
-                    onChange={(value) => updateValue("newAsset", value)}
-                  />
-                )}
-                {rowByKey.investSign && (
-                  <MetricInput
-                    label={rowByKey.investSign.label}
-                    unit={indicatorUnits.investSign}
-                    value={values.investSign || ""}
-                    onChange={(value) => updateValue("investSign", value)}
-                  />
-                )}
-                {rowByKey.validAccount && (
-                  <label className="form-field">
-                    有效户 / 空户数
-                    <div className="compound-row">
-                      <div className="input-unit">
-                        <input type="text" inputMode="decimal" enterKeyHint="next" value={values.validAccount || ""} onChange={(event) => updateValue("validAccount", event.target.value.replace(/[^\d.]/g, ""))} placeholder="有效户" />
-                        <span>户</span>
-                      </div>
-                      <div className="input-unit">
-                        <input type="text" inputMode="numeric" enterKeyHint="next" value={emptyCount} onChange={(event) => setEmptyCount(event.target.value.replace(/\D/g, ""))} placeholder="空户数" />
-                        <span>户</span>
-                      </div>
-                    </div>
-                  </label>
-                )}
-                {rowByKey.productSales && (
-                  <label className="form-field">
-                    产品销售额
-                    <div className="compound-row product-compound">
-                      <div className="input-unit">
-                        <input type="text" inputMode="decimal" enterKeyHint="next" value={values.productSales || ""} onChange={(event) => updateValue("productSales", event.target.value.replace(/[^\d.]/g, ""))} placeholder="金额" />
-                        <span>万元</span>
-                      </div>
-                      <ProductTypePicker value={productType} onChange={setProductType} />
-                    </div>
-                  </label>
-                )}
-                {rowByKey[marginKey] && (
-                  <MetricInput
-                    label={rowByKey[marginKey].label}
-                    unit={indicatorUnits[marginKey]}
-                    value={values[marginKey] || ""}
-                    onChange={(value) => updateValue(marginKey, value)}
-                  />
-                )}
+                <MetricInput
+                  label={getRowLabel("newAsset")}
+                  unit={indicatorUnits.newAsset}
+                  value={values.newAsset || ""}
+                  onChange={(value) => updateValue("newAsset", value)}
+                />
+                <MetricInput
+                  label={getRowLabel("investSign")}
+                  unit={indicatorUnits.investSign}
+                  value={values.investSign || ""}
+                  onChange={(value) => updateValue("investSign", value)}
+                />
+                <MetricInput
+                  label={getRowLabel("validAccount")}
+                  unit={indicatorUnits.validAccount}
+                  value={values.validAccount || ""}
+                  onChange={(value) => updateValue("validAccount", value)}
+                />
                 <label className="form-field">
-                  额外加分
+                  产品销售额-私募
                   <div className="input-unit">
-                    <input type="text" inputMode="decimal" enterKeyHint="done" value={values.extraT0 || ""} onChange={(event) => updateValue("extraT0", event.target.value.replace(/[^\d.]/g, ""))} placeholder="0" />
-                    <span>分</span>
+                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.privateFund || ""} onChange={(event) => updateValue("privateFund", event.target.value.replace(/[^\d.]/g, ""))} placeholder="0" />
+                    <span>万元</span>
+                  </div>
+                </label>
+                <label className="form-field">
+                  空户
+                  <div className="input-unit">
+                    <input type="text" inputMode="numeric" enterKeyHint="next" value={emptyCount} onChange={(event) => setEmptyCount(event.target.value.replace(/\D/g, ""))} placeholder="0" />
+                    <span>户</span>
+                  </div>
+                </label>
+                <label className="form-field">
+                  产品销售额-公募
+                  <div className="input-unit">
+                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.publicFund || ""} onChange={(event) => updateValue("publicFund", event.target.value.replace(/[^\d.]/g, ""))} placeholder="0" />
+                    <span>万元</span>
+                  </div>
+                </label>
+                <MetricInput
+                  label={getRowLabel(marginKey)}
+                  unit={indicatorUnits[marginKey]}
+                  value={values[marginKey] || ""}
+                  onChange={(value) => updateValue(marginKey, value)}
+                />
+                <label className="form-field">
+                  产品销售额-收凭
+                  <div className="input-unit">
+                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.receipt || ""} onChange={(event) => updateValue("receipt", event.target.value.replace(/[^\d.]/g, ""))} placeholder="0" />
+                    <span>万元</span>
                   </div>
                 </label>
               </div>
             </section>
 
             <section className="form-section">
-              <label className="form-field full-width">
-                备注信息
-                <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="请输入来源、客户详情或修正说明..." />
-              </label>
+              <div className="support-grid">
+                <label className="form-field">
+                  其他积分
+                  <div className="input-unit">
+                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.extraT0 || ""} onChange={(event) => updateValue("extraT0", event.target.value.replace(/[^\d.]/g, ""))} placeholder="0" />
+                    <span>分</span>
+                  </div>
+                </label>
+                <label className="form-field">
+                  备注信息
+                  <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="填写备注..." />
+                </label>
+              </div>
             </section>
           </fieldset>
 
-          {isLocked && <div className="submitted-banner">✓ 当日已提交，普通员工不可修改</div>}
+          {allSubmitted && <div className="submitted-banner">✓ 今日全部员工已填报完成</div>}
+          {isSubmittedEmployee && <div className="submitted-banner">✓ {selectedEmployee?.name || "该员工"}在{date}已提交，可切换其他员工继续填报。</div>}
 
-          <button className={`primary submit-wide ${submitState === "success" || isLocked ? "success" : ""}`} disabled={submitState === "submitting" || isLocked}>
+          <button className={`primary submit-wide ${submitState === "success" ? "success" : ""}`} disabled={submitState === "submitting" || submitSuccessVisible || isSubmittedEmployee || !selectedEmployee}>
             {submitLabel}
           </button>
-          {adminUnlocked && hasSubmittedForDay && (
-            <button type="button" className="ghost submit-wide" onClick={clearTodayRecords}>
-              清除当日填报并重新编辑
-            </button>
-          )}
         </form>
       </section>
 

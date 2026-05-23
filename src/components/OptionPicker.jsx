@@ -2,7 +2,7 @@ import { useState } from "react";
 
 export default function OptionPicker({ options, value, onChange, placeholder = "请选择" }) {
   const [open, setOpen] = useState(false);
-  const selected = options.find((option) => option.value === value) || options[0];
+  const selected = options.find((option) => option.value === value) || null;
 
   return (
     <div className="picker">

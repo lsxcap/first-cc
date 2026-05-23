@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { getEmployeeBackupMeta, restoreEmployeesFromBackup } from "../services/dataService.js";
 import { indicatorRowsFor } from "../utils/metrics.js";
 import OptionPicker from "../components/OptionPicker.jsx";
 
-export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee, onSeed, adminUnlocked, onAdminUnlockedChange }) {
+export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee, onSeed, isAdmin, onSetAdmin }) {
   const makeNewEmployee = () => ({
     id: `e${Date.now()}`,
     name: "",
@@ -13,12 +13,14 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
 
   const [editingEmployee, setEditingEmployee] = useState(null);
   const [draftEmployee, setDraftEmployee] = useState(makeNewEmployee);
-  const unlocked = adminUnlocked;
+  const unlocked = isAdmin;
   const [formOpen, setFormOpen] = useState(false);
   const [saveState, setSaveState] = useState("idle");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [backupMeta, setBackupMeta] = useState(() => getEmployeeBackupMeta());
+  const createFormRef = useRef(null);
+  const firstFieldRef = useRef(null);
 
   const employee = editingEmployee || draftEmployee;
   const isEditing = Boolean(editingEmployee);
@@ -30,8 +32,9 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
 
   function unlock(event) {
     event.preventDefault();
+
     if (password === (import.meta.env.VITE_ADMIN_ACCESS_CODE || "123456")) {
-      onAdminUnlockedChange(true);
+      onSetAdmin(true);
       setAuthError("");
       setFormOpen(false);
     } else {
@@ -39,21 +42,15 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
     }
   }
 
-  function lockManage() {
-    onAdminUnlockedChange(false);
-    setPassword("");
-    setAuthError("");
-    setFormOpen(false);
-    setEditingEmployee(null);
-    setDraftEmployee(makeNewEmployee());
-    setSaveState("idle");
-  }
-
   function openCreate() {
     setEditingEmployee(null);
     setDraftEmployee(makeNewEmployee());
     setSaveState("idle");
     setFormOpen(true);
+    window.setTimeout(() => {
+      createFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      firstFieldRef.current?.focus();
+    }, 0);
   }
 
   function openEdit(item) {
@@ -125,15 +122,14 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
       <section className="panel">
         <div className="panel-title">
           <div>
-            <p className="eyebrow">管理区 {unlocked ? "· 管理员模式中" : ""}</p>
+            <p className="eyebrow">{unlocked ? "管理模式中" : "管理区"}</p>
             <h2>员工与指标</h2>
           </div>
           {unlocked && (
-            <div className="panel-actions">
-              <button className="ghost" onClick={openCreate}>新增员工</button>
-              <button className="ghost" onClick={guardedSeed}>初始化样例</button>
-              <button className="ghost" onClick={restoreBackup}>恢复员工备份</button>
-              <button className="ghost" onClick={lockManage}>退出管理</button>
+            <div className="panel-actions admin-actions-group">
+              <button type="button" className="primary action-main" onClick={openCreate}>新增员工</button>
+              <button type="button" className="ghost action-secondary" onClick={guardedSeed}>初始化样例</button>
+              <button type="button" className="ghost action-secondary" onClick={restoreBackup}>恢复员工备份</button>
             </div>
           )}
         </div>
@@ -172,7 +168,7 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
         </div>
       </section>
       {unlocked && formOpen && (
-        <section className="panel">
+        <section className="panel manage-form-panel" ref={createFormRef}>
           <div className="panel-title">
             <h2>{isEditing ? "编辑员工" : "新增员工"}</h2>
             <div className="panel-actions">
@@ -183,6 +179,7 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
             <label>
               姓名
               <input
+                ref={firstFieldRef}
                 value={employee.name}
                 onChange={(event) => {
                   const next = { ...employee, name: event.target.value };

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { indicatorLabels, indicatorUnits, monthlyRules } from "../config/data.js";
+import { indicatorLabels, monthlyRules } from "../config/data.js";
 import { computeMonthlyStats, formatNumber, monthString, withRewardPoints } from "../utils/metrics.js";
 
 function downloadCsv(filename, headers, rows) {
