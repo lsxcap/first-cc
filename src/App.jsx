@@ -4,7 +4,7 @@ import DailyDataPage from "./pages/DailyDataPage.jsx";
 import MonthlyPage from "./pages/MonthlyPage.jsx";
 import ManagePage from "./pages/ManagePage.jsx";
 import { initialEmployees, initialRecords } from "./config/data.js";
-import { ensureAnonymousSession, firebaseReady } from "./services/firebase.js";
+import { ensureRemoteSession, remoteReady } from "./services/cloudbase.js";
 import {
   addRecord,
   initializeProductionData,
@@ -56,7 +56,7 @@ export default function App() {
 
     async function connect() {
       try {
-        if (firebaseReady) await withTimeout(ensureAnonymousSession(), 6000, "远程登录超时，已启用本地暂存");
+        if (remoteReady) await withTimeout(ensureRemoteSession(), 6000, "远程登录超时，已启用本地暂存");
         if (!cancelled) unsubscribe = subscribeData(setData, (err) => setError(err.message));
       } catch (err) {
         if (cancelled) return;
@@ -64,7 +64,7 @@ export default function App() {
         unsubscribe = subscribeLocalData(setData);
         retryTimer = window.setInterval(async () => {
           try {
-            if (firebaseReady) await withTimeout(ensureAnonymousSession(), 6000);
+            if (remoteReady) await withTimeout(ensureRemoteSession(), 6000);
             await syncPendingRecords();
             if (cancelled) return;
             unsubscribe();

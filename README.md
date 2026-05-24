@@ -1,6 +1,6 @@
-# 刘娟的工作台
+# Juanwork1.0
 
-刘娟工作台的最终 GitHub 上传版本，使用 Vite + React 构建。
+刘娟工作台的独立重构版本，使用 Vite + React 构建。
 
 ## 启动
 
@@ -15,10 +15,19 @@ npm run dev
 - 每日数据
 - 月度看板
 - 员工管理
-- 本地存储降级支持
+- 腾讯云 CloudBase / 本地存储降级支持
 
 ## 说明
 
-- 当前版本不包含任何 `.env`、token 或 Firebase 敏感配置文件。
-- 项目可直接上传到 GitHub。
-- 若要接入 Firebase，请自行在本地环境配置，不要提交敏感密钥到仓库。
+- 生产数据优先使用腾讯云 CloudBase。
+- 本地存储仅作为离线降级与临时备份。
+- 管理员模式支持跨页面保持与自动超时退出。
+
+## 腾讯云配置
+
+复制 `.env.example` 为 `.env`，并填写腾讯云 CloudBase 环境 ID：
+
+```bash
+VITE_CLOUDBASE_ENV_ID=your-cloudbase-env-id
+VITE_CLOUDBASE_REGION=ap-shanghai
+```

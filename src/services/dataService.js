@@ -1,16 +1,4 @@
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc
-} from "firebase/firestore";
-import { db, firebaseReady } from "../services/firebase.js";
+import { db, remoteNow, remoteReady } from "../services/cloudbase.js";
 import { emptyTargets, initialEmployees, initialRecords } from "../config/data.js";
 
 const STORAGE_VERSION = "v5";
@@ -23,6 +11,7 @@ const REMOTE_TIMEOUT_MS = 8000;
 const localSubscribers = new Set();
 const remoteRefreshers = new Set();
 const baseEmployeeIds = new Set(initialEmployees.map((employee) => employee.id));
+const baseEmployeeOrder = new Map(initialEmployees.map((employee, index) => [employee.id, index]));
 
 function loadLocal(key, fallback) {
   try {
@@ -107,6 +96,15 @@ function normalizeEmployee(employee) {
   };
 }
 
+function orderEmployeeList(employees) {
+  return [...employees].sort((a, b) => {
+    const orderA = baseEmployeeOrder.has(a.id) ? baseEmployeeOrder.get(a.id) : Number.MAX_SAFE_INTEGER;
+    const orderB = baseEmployeeOrder.has(b.id) ? baseEmployeeOrder.get(b.id) : Number.MAX_SAFE_INTEGER;
+    if (orderA !== orderB) return orderA - orderB;
+    return String(a.name || "").localeCompare(String(b.name || ""), "zh-CN");
+  });
+}
+
 function clearEmployeeTargets(employee) {
   return {
     id: employee.id,
@@ -139,18 +137,43 @@ function syncDeletedBaseIdsFromEmployees(employees) {
   return ids;
 }
 
-function protectEmployeeList(value) {
-  const deletedEmployeeIds = loadDeletedEmployeeIds();
+function remoteCollection(name) {
+  if (!db) return null;
+  return db.collection(name);
+}
+
+function remoteDoc(name, id) {
+  return remoteCollection(name)?.doc(id);
+}
+
+function normalizeRemoteRow(row) {
+  const id = row.id || row._id;
+  const next = { ...row, id };
+  delete next._id;
+  return next;
+}
+
+async function getRemoteCollection(name, sortField, sortDirection = "asc") {
+  let queryRef = remoteCollection(name);
+  if (!queryRef) return [];
+  if (sortField) queryRef = queryRef.orderBy(sortField, sortDirection);
+  const result = await withTimeout(queryRef.limit(1000).get(), REMOTE_TIMEOUT_MS);
+  return (result?.data || []).map(normalizeRemoteRow);
+}
+
+function protectEmployeeList(value, options = {}) {
+  const { restoreMissingBase = true, useDeletedIds = true } = options;
+  const deletedEmployeeIds = useDeletedIds ? loadDeletedEmployeeIds() : new Set();
   const current = normalizeEmployeeList(value).filter((employee) => employee?.id && employee?.name && !deletedEmployeeIds.has(employee.id));
-  const baseEmployees = initialEmployees.filter((employee) => !deletedEmployeeIds.has(employee.id));
+  const baseEmployees = restoreMissingBase ? initialEmployees.filter((employee) => !deletedEmployeeIds.has(employee.id)) : [];
   const currentBaseCount = current.filter((employee) => baseEmployeeIds.has(employee.id)).length;
   const hasCustomEmployees = current.some((employee) => !baseEmployeeIds.has(employee.id));
 
-  if (!current.length) {
+  if (!current.length && restoreMissingBase) {
     return baseEmployees.map(normalizeEmployee);
   }
 
-  if (!deletedEmployeeIds.size && !hasCustomEmployees && currentBaseCount > 0 && currentBaseCount < Math.ceil(initialEmployees.length / 2)) {
+  if (restoreMissingBase && !deletedEmployeeIds.size && !hasCustomEmployees && currentBaseCount > 0 && currentBaseCount < Math.ceil(initialEmployees.length / 2)) {
     return initialEmployees.map(normalizeEmployee);
   }
 
@@ -169,8 +192,11 @@ function protectEmployeeList(value) {
     }
   }
 
-  const customEmployees = current.filter((employee) => !baseEmployeeIds.has(employee.id));
-  return [...baseEmployees.map((employee) => byId.get(employee.id) || normalizeEmployee(employee)), ...customEmployees];
+  const customEmployees = current.filter((employee) => !restoreMissingBase || !baseEmployeeIds.has(employee.id));
+  const next = restoreMissingBase
+    ? [...baseEmployees.map((employee) => byId.get(employee.id) || normalizeEmployee(employee)), ...customEmployees]
+    : customEmployees.map(normalizeEmployee);
+  return orderEmployeeList(next);
 }
 
 function emitLocalSnapshot() {
@@ -227,47 +253,51 @@ export function restoreEmployeesFromBackup() {
 }
 
 export function subscribeData(onData, onError) {
-  if (!firebaseReady || !db) {
+  if (!remoteReady || !db) {
     return subscribeLocalData(onData);
   }
 
   let employees = [];
   let records = [];
-  let readyEmployees = false;
-  let readyRecords = false;
+  let active = true;
+  let refreshing = false;
 
-  const emit = () => {
-    if (readyEmployees && readyRecords) {
+  const refresh = async () => {
+    if (!active || refreshing) return;
+    refreshing = true;
+    try {
+      const [employeeDocs, recordDocs] = await Promise.all([
+        getRemoteCollection("employees", "name", "asc"),
+        getRemoteCollection("records", "date", "desc")
+      ]);
+      if (!active) return;
+      employees = employeeDocs.length
+        ? protectEmployeeList(employeeDocs, { restoreMissingBase: false, useDeletedIds: false })
+        : initialEmployees.map(normalizeEmployee);
+      records = recordDocs.length ? recordDocs : initialRecords();
       onData({ employees, records: mergeRemoteWithPending(records) });
       syncPendingRecords().catch(onError);
+    } catch (err) {
+      if (!active) return;
+      onError?.(err);
+      const localSnapshot = loadLocalSnapshot();
+      onData({
+        employees: employees.length ? employees : localSnapshot.employees,
+        records: mergeRemoteWithPending(records.length ? records : localSnapshot.records)
+      });
+    } finally {
+      refreshing = false;
     }
   };
-  remoteRefreshers.add(emit);
 
-  const unsubEmployees = onSnapshot(
-    query(collection(db, "employees"), orderBy("name")),
-    (snapshot) => {
-      employees = protectEmployeeList(snapshot.empty ? initialEmployees : snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
-      readyEmployees = true;
-      emit();
-    },
-    onError
-  );
-
-  const unsubRecords = onSnapshot(
-    query(collection(db, "records"), orderBy("date", "desc")),
-    (snapshot) => {
-      records = snapshot.empty ? initialRecords() : snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
-      readyRecords = true;
-      emit();
-    },
-    onError
-  );
+  refresh();
+  const refreshTimer = window.setInterval(refresh, 10000);
+  remoteRefreshers.add(refresh);
 
   return () => {
-    remoteRefreshers.delete(emit);
-    unsubEmployees();
-    unsubRecords();
+    active = false;
+    window.clearInterval(refreshTimer);
+    remoteRefreshers.delete(refresh);
   };
 }
 
@@ -280,17 +310,17 @@ export function subscribeLocalData(onData) {
 }
 
 export async function syncPendingRecords() {
-  if (!firebaseReady || !db) return { synced: 0, pending: loadPendingRecords().length };
+  if (!remoteReady || !db) return { synced: 0, pending: loadPendingRecords().length };
   const pendingRecords = loadPendingRecords();
   if (!pendingRecords.length) return { synced: 0, pending: 0 };
 
   let synced = 0;
   for (const record of pendingRecords) {
     await withTimeout(
-      setDoc(doc(db, "records", record.id), {
+      remoteDoc("records", record.id).set({
         ...cleanRemoteRecord(record),
-        syncedAt: serverTimestamp()
-      }, { merge: true }),
+        syncedAt: remoteNow()
+      }),
       REMOTE_TIMEOUT_MS
     );
     synced += 1;
@@ -307,7 +337,7 @@ export async function initializeProductionData() {
   const sourceEmployees = initialEmployees.map(normalizeEmployee);
   const cleanEmployees = sourceEmployees.map(clearEmployeeTargets);
 
-  if (!firebaseReady || !db) {
+  if (!remoteReady || !db) {
     saveDeletedEmployeeIds(new Set());
     saveLocal(EMPLOYEE_BACKUP_KEY, {
       savedAt: Date.now(),
@@ -319,20 +349,20 @@ export async function initializeProductionData() {
     return;
   }
 
-  const employeesSnapshot = await getDocs(collection(db, "employees"));
-  const customEmployeeDocs = employeesSnapshot.docs.filter((item) => !baseEmployeeIds.has(item.id));
+  const employeesSnapshot = await getRemoteCollection("employees");
+  const customEmployeeDocs = employeesSnapshot.filter((item) => !baseEmployeeIds.has(item.id));
   await Promise.all([
-    ...customEmployeeDocs.map((item) => deleteDoc(doc(db, "employees", item.id))),
-    ...cleanEmployees.map((employee) => setDoc(doc(db, "employees", employee.id), employee))
+    ...customEmployeeDocs.map((item) => withTimeout(remoteDoc("employees", item.id).remove(), REMOTE_TIMEOUT_MS)),
+    ...cleanEmployees.map((employee) => withTimeout(remoteDoc("employees", employee.id).set(employee), REMOTE_TIMEOUT_MS))
   ]);
 
-  const recordsSnapshot = await getDocs(collection(db, "records"));
-  await Promise.all(recordsSnapshot.docs.map((item) => deleteDoc(doc(db, "records", item.id))));
+  const recordsSnapshot = await getRemoteCollection("records");
+  await Promise.all(recordsSnapshot.map((item) => withTimeout(remoteDoc("records", item.id).remove(), REMOTE_TIMEOUT_MS)));
 }
 
 export async function addRecord(record) {
   const localRecord = normalizeRecordForLocal(record);
-  if (!firebaseReady || !db) {
+  if (!remoteReady || !db) {
     saveLocalRecord({
       ...localRecord,
       syncStatus: "pending",
@@ -345,10 +375,10 @@ export async function addRecord(record) {
 
   try {
     await withTimeout(
-      setDoc(doc(db, "records", localRecord.id), {
+      remoteDoc("records", localRecord.id).set({
         ...cleanRemoteRecord(localRecord),
-        createdAt: serverTimestamp()
-      }, { merge: true }),
+        createdAt: remoteNow()
+      }),
       REMOTE_TIMEOUT_MS
     );
     return { status: "remote", record: localRecord };
@@ -371,7 +401,7 @@ export async function saveEmployee(employee) {
     saveDeletedEmployeeIds(deletedEmployeeIds);
   }
 
-  if (!firebaseReady || !db) {
+  if (!remoteReady || !db) {
     const current = protectEmployeeList(loadLocal(EMPLOYEE_KEY, initialEmployees));
     if (!current.length && initialEmployees.length) {
       throw new Error("员工数据源异常，请先恢复后再保存");
@@ -389,7 +419,7 @@ export async function saveEmployee(employee) {
     emitLocalSnapshot();
     return;
   }
-  await setDoc(doc(db, "employees", employee.id), employee, { merge: true });
+  await withTimeout(remoteDoc("employees", employee.id).set(employee), REMOTE_TIMEOUT_MS);
 }
 
 export async function removeEmployee(employeeId) {
@@ -398,7 +428,7 @@ export async function removeEmployee(employeeId) {
     deletedEmployeeIds.add(employeeId);
     saveDeletedEmployeeIds(deletedEmployeeIds);
   }
-  if (!firebaseReady || !db) {
+  if (!remoteReady || !db) {
     const current = protectEmployeeList(loadLocal(EMPLOYEE_KEY, initialEmployees));
     saveLocal(EMPLOYEE_BACKUP_KEY, {
       savedAt: Date.now(),
@@ -408,31 +438,31 @@ export async function removeEmployee(employeeId) {
     emitLocalSnapshot();
     return;
   }
-  await deleteDoc(doc(db, "employees", employeeId));
+  await withTimeout(remoteDoc("employees", employeeId).remove(), REMOTE_TIMEOUT_MS);
 }
 
 export async function updateRecord(recordId, patch) {
-  if (!firebaseReady || !db) {
+  if (!remoteReady || !db) {
     const current = loadLocal(RECORD_KEY, initialRecords());
     saveLocal(RECORD_KEY, current.map((item) => (item.id === recordId ? { ...item, ...patch } : item)));
     emitLocalSnapshot();
     return;
   }
-  await updateDoc(doc(db, "records", recordId), patch);
+  await withTimeout(remoteDoc("records", recordId).update(patch), REMOTE_TIMEOUT_MS);
 }
 
 export async function removeRecordsByEmployeeDate(employeeId, date) {
-  if (!firebaseReady || !db) {
+  if (!remoteReady || !db) {
     const current = loadLocal(RECORD_KEY, initialRecords());
     saveLocal(RECORD_KEY, current.filter((item) => !(item.employeeId === employeeId && item.date === date)));
     emitLocalSnapshot();
     return;
   }
 
-  const snapshot = await getDocs(query(collection(db, "records")));
-  const targets = snapshot.docs.filter((item) => {
-    const data = item.data();
-    return data.employeeId === employeeId && data.date === date;
-  });
-  await Promise.all(targets.map((item) => deleteDoc(doc(db, "records", item.id))));
+  const result = await withTimeout(
+    remoteCollection("records").where({ employeeId, date }).get(),
+    REMOTE_TIMEOUT_MS
+  );
+  const targets = (result?.data || []).map(normalizeRemoteRow);
+  await Promise.all(targets.map((item) => withTimeout(remoteDoc("records", item.id).remove(), REMOTE_TIMEOUT_MS)));
 }
