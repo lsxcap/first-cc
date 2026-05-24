@@ -43,76 +43,30 @@ export const monthlyRules = [
   "积分：当日有效户每新增1户加5分；月度产品销售额达到300万元加5分；综合完成率组内首位/末位按规则奖惩。"
 ];
 
+export const emptyTargets = {
+  validAccount: 0,
+  newAsset: 0,
+  investSign: 0,
+  twoMarginValid: 0,
+  productSales: 0,
+  twoMarginNew: 0
+};
+
 export const initialEmployees = [
-  { id: "e1", name: "汪洋", group: "老人组", targets: { validAccount: 7, newAsset: 130, investSign: 9, twoMarginValid: 1, productSales: 100, twoMarginNew: 0 } },
-  { id: "e2", name: "涂雪娇", group: "老人组", targets: { validAccount: 7, newAsset: 130, investSign: 9, twoMarginValid: 1, productSales: 100, twoMarginNew: 0 } },
-  { id: "e3", name: "简金平", group: "老人组", targets: { validAccount: 7, newAsset: 140, investSign: 9, twoMarginValid: 1, productSales: 100, twoMarginNew: 0 } },
-  { id: "e4", name: "胡文贵", group: "老人组", targets: { validAccount: 7, newAsset: 100, investSign: 7, twoMarginValid: 1, productSales: 70, twoMarginNew: 0 } },
-  { id: "e5", name: "张小雪", group: "老人组", targets: { validAccount: 7, newAsset: 100, investSign: 7, twoMarginValid: 1, productSales: 70, twoMarginNew: 0 } },
-  { id: "e6", name: "曹忠", group: "老人组", targets: { validAccount: 7, newAsset: 100, investSign: 7, twoMarginValid: 1, productSales: 70, twoMarginNew: 0 } },
-  { id: "e7", name: "曾印名", group: "老人组", targets: { validAccount: 7, newAsset: 100, investSign: 7, twoMarginValid: 1, productSales: 70, twoMarginNew: 0 } },
-  { id: "e8", name: "付颖", group: "老人组", targets: { validAccount: 7, newAsset: 100, investSign: 7, twoMarginValid: 1, productSales: 70, twoMarginNew: 0 } },
-  { id: "e9", name: "唐传得", group: "新人组", targets: { validAccount: 7, newAsset: 120, investSign: 5, productSales: 20, twoMarginNew: 1, twoMarginValid: 0 } },
-  { id: "e10", name: "龙玮丹", group: "新人组", targets: { validAccount: 7, newAsset: 100, investSign: 5, productSales: 20, twoMarginNew: 1, twoMarginValid: 0 } },
-  { id: "e11", name: "邓皓悦", group: "新人组", targets: { validAccount: 7, newAsset: 100, investSign: 5, productSales: 20, twoMarginNew: 1, twoMarginValid: 0 } },
-  { id: "e12", name: "陈菲", group: "新人组", targets: { validAccount: 7, newAsset: 100, investSign: 5, productSales: 20, twoMarginNew: 1, twoMarginValid: 0 } }
+  { id: "e1", name: "汪洋", group: "老人组", targets: { ...emptyTargets } },
+  { id: "e2", name: "涂雪娇", group: "老人组", targets: { ...emptyTargets } },
+  { id: "e3", name: "简金平", group: "老人组", targets: { ...emptyTargets } },
+  { id: "e4", name: "胡文贵", group: "老人组", targets: { ...emptyTargets } },
+  { id: "e5", name: "张小雪", group: "老人组", targets: { ...emptyTargets } },
+  { id: "e6", name: "曹忠", group: "老人组", targets: { ...emptyTargets } },
+  { id: "e7", name: "曾印名", group: "老人组", targets: { ...emptyTargets } },
+  { id: "e8", name: "付颖", group: "老人组", targets: { ...emptyTargets } },
+  { id: "e9", name: "唐传得", group: "新人组", targets: { ...emptyTargets } },
+  { id: "e10", name: "龙玮丹", group: "新人组", targets: { ...emptyTargets } },
+  { id: "e11", name: "邓皓悦", group: "新人组", targets: { ...emptyTargets } },
+  { id: "e12", name: "陈菲", group: "新人组", targets: { ...emptyTargets } }
 ];
 
 export function initialRecords() {
-  const mayDate = "2026-05-31";
-  const mayActuals = {
-    涂雪娇: { validAccount: 6, newAsset: 84.8, investSign: 2, productSales: 203 },
-    汪洋: { validAccount: 4, newAsset: 19.3, investSign: 1, productSales: 29.7 },
-    胡文贵: { validAccount: 6, newAsset: 205, investSign: 4, twoMarginValid: 1, productSales: 25.3 },
-    简金平: { validAccount: 5, newAsset: 20.2, investSign: 4, twoMarginValid: 1, productSales: 117.15 },
-    张小雪: { validAccount: 7, newAsset: 157, investSign: 1 },
-    曹忠: { validAccount: 4, newAsset: 9.1, investSign: 21, productSales: 6.3 },
-    曾印名: { validAccount: 3, newAsset: 3.1, investSign: 7, productSales: 5 },
-    付颖: { validAccount: 2, newAsset: 10, investSign: 2, productSales: 7 },
-    唐传得: { validAccount: 1, newAsset: 26, productSales: 1 },
-    龙玮丹: { validAccount: 1, newAsset: 11, productSales: 1.5 },
-    邓皓悦: { productSales: 92 },
-    陈菲: { validAccount: 4, newAsset: 143 }
-  };
-
-  const records = [];
-  for (const employee of initialEmployees) {
-    const actuals = mayActuals[employee.name];
-    if (!actuals) continue;
-    for (const [indicator, value] of Object.entries(actuals)) {
-      if (!value) continue;
-      records.push({
-        id: `seed-${employee.id}-${indicator}`,
-        employeeId: employee.id,
-        employeeName: employee.name,
-        date: mayDate,
-        indicator,
-        value,
-        extraPoints: 0,
-        note: "2026年5月样例数据"
-      });
-    }
-  }
-
-  [
-    ["e1", "validAccount", 2],
-    ["e2", "newAsset", 55],
-    ["e3", "investSign", 1],
-    ["e4", "productSales", 30],
-    ["e5", "twoMarginValid", 1]
-  ].forEach(([employeeId, indicator, value], index) => {
-    const employee = initialEmployees.find((item) => item.id === employeeId);
-    records.push({
-      id: `demo-20260519-${index}`,
-      employeeId,
-      employeeName: employee?.name || "",
-      date: "2026-05-19",
-      indicator,
-      value,
-      extraPoints: 0,
-      note: "日报演示数据"
-    });
-  });
-
-  return records;
+  return [];
 }

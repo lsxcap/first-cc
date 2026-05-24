@@ -7,10 +7,10 @@ import { initialEmployees, initialRecords } from "./config/data.js";
 import { ensureAnonymousSession, firebaseReady } from "./services/firebase.js";
 import {
   addRecord,
+  initializeProductionData,
   removeEmployee,
   removeRecordsByEmployeeDate,
   saveEmployee,
-  seedInitialData,
   subscribeData,
   updateRecord
 } from "./services/dataService.js";
@@ -86,7 +86,7 @@ export default function App() {
         {page === "fill" && <FillPage employees={employees} records={records} onAddRecord={addRecord} adminUnlocked={isAdmin} />}
         {page === "daily" && <DailyDataPage employees={employees} records={records} isAdmin={isAdmin} onSetAdmin={setIsAdmin} onUpdateRecord={updateRecord} onRemoveRecordsByEmployeeDate={removeRecordsByEmployeeDate} />}
         {page === "monthly" && <MonthlyPage employees={employees} records={records} isAdmin={isAdmin} onSetAdmin={setIsAdmin} />}
-        {page === "manage" && <ManagePage employees={employees} onSaveEmployee={saveEmployee} onRemoveEmployee={removeEmployee} onSeed={seedInitialData} isAdmin={isAdmin} onSetAdmin={setIsAdmin} onExitAdminMode={exitAdminMode} />}
+        {page === "manage" && <ManagePage employees={employees} onSaveEmployee={saveEmployee} onRemoveEmployee={removeEmployee} onInitializeProductionData={initializeProductionData} isAdmin={isAdmin} onSetAdmin={setIsAdmin} onExitAdminMode={exitAdminMode} />}
       </main>
       <nav className="bottom-nav">
         <button className={page === "fill" ? "active" : ""} onClick={() => setPage("fill")}><span>填</span>今日填报</button>

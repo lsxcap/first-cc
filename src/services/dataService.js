@@ -12,11 +12,12 @@ import {
   updateDoc
 } from "firebase/firestore";
 import { db, firebaseReady } from "../services/firebase.js";
-import { initialEmployees, initialRecords } from "../config/data.js";
+import { emptyTargets, initialEmployees, initialRecords } from "../config/data.js";
 
-const STORAGE_VERSION = "v3";
+const STORAGE_VERSION = "v4";
 const EMPLOYEE_KEY = `juan_workbench_employees_${STORAGE_VERSION}`;
 const EMPLOYEE_BACKUP_KEY = `juan_workbench_employees_backup_${STORAGE_VERSION}`;
+const DELETED_EMPLOYEE_KEY = `juan_workbench_deleted_employees_${STORAGE_VERSION}`;
 const RECORD_KEY = `juan_workbench_records_${STORAGE_VERSION}`;
 
 const localSubscribers = new Set();
@@ -43,11 +44,6 @@ function normalizeEmployeeList(value) {
   return [];
 }
 
-function isTemporaryEmployee(employee) {
-  const text = `${employee?.id || ""} ${employee?.name || ""}`.toLowerCase();
-  return /测试|临时|test|demo/.test(text);
-}
-
 function normalizeEmployee(employee) {
   return {
     ...employee,
@@ -55,17 +51,57 @@ function normalizeEmployee(employee) {
   };
 }
 
+function clearEmployeeTargets(employee) {
+  return {
+    id: employee.id,
+    name: employee.name,
+    group: employee.group,
+    targets: { ...emptyTargets }
+  };
+}
+
+function loadDeletedEmployeeIds() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DELETED_EMPLOYEE_KEY) || "[]");
+    return Array.isArray(saved) ? new Set(saved) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDeletedEmployeeIds(ids) {
+  saveLocal(DELETED_EMPLOYEE_KEY, [...ids]);
+}
+
+function syncDeletedBaseIdsFromEmployees(employees) {
+  const ids = new Set();
+  const employeeIds = new Set(employees.map((employee) => employee.id));
+  for (const baseId of baseEmployeeIds) {
+    if (!employeeIds.has(baseId)) ids.add(baseId);
+  }
+  saveDeletedEmployeeIds(ids);
+  return ids;
+}
+
 function protectEmployeeList(value) {
-  const current = normalizeEmployeeList(value).filter((employee) => employee?.id && employee?.name && !isTemporaryEmployee(employee));
+  const deletedEmployeeIds = loadDeletedEmployeeIds();
+  const current = normalizeEmployeeList(value).filter((employee) => employee?.id && employee?.name && !deletedEmployeeIds.has(employee.id));
+  const baseEmployees = initialEmployees.filter((employee) => !deletedEmployeeIds.has(employee.id));
   const currentBaseCount = current.filter((employee) => baseEmployeeIds.has(employee.id)).length;
-  if (current.length > 0 && currentBaseCount < initialEmployees.length && current.length < initialEmployees.length) {
+  const hasCustomEmployees = current.some((employee) => !baseEmployeeIds.has(employee.id));
+
+  if (!current.length) {
+    return baseEmployees.map(normalizeEmployee);
+  }
+
+  if (!deletedEmployeeIds.size && !hasCustomEmployees && currentBaseCount > 0 && currentBaseCount < Math.ceil(initialEmployees.length / 2)) {
     return initialEmployees.map(normalizeEmployee);
   }
 
-  const byId = new Map(initialEmployees.map((employee) => [employee.id, normalizeEmployee(employee)]));
+  const byId = new Map(baseEmployees.map((employee) => [employee.id, normalizeEmployee(employee)]));
 
   for (const employee of current) {
-    if (baseEmployeeIds.has(employee.id)) {
+    if (baseEmployeeIds.has(employee.id) && byId.has(employee.id)) {
       byId.set(employee.id, {
         ...byId.get(employee.id),
         ...normalizeEmployee(employee),
@@ -78,7 +114,7 @@ function protectEmployeeList(value) {
   }
 
   const customEmployees = current.filter((employee) => !baseEmployeeIds.has(employee.id));
-  return [...initialEmployees.map((employee) => byId.get(employee.id) || normalizeEmployee(employee)), ...customEmployees];
+  return [...baseEmployees.map((employee) => byId.get(employee.id) || normalizeEmployee(employee)), ...customEmployees];
 }
 
 function emitLocalSnapshot() {
@@ -118,6 +154,7 @@ export function restoreEmployeesFromBackup() {
   try {
     const backup = JSON.parse(localStorage.getItem(EMPLOYEE_BACKUP_KEY) || "null");
     if (!backup?.savedAt || !Array.isArray(backup?.employees)) return false;
+    syncDeletedBaseIdsFromEmployees(backup.employees);
     saveLocal(EMPLOYEE_KEY, protectEmployeeList(backup.employees));
     emitLocalSnapshot();
     return true;
@@ -170,23 +207,26 @@ export function subscribeData(onData, onError) {
   };
 }
 
-export async function seedInitialData() {
+export async function initializeProductionData(employees = []) {
+  const sourceEmployees = protectEmployeeList(employees.length ? employees : loadLocal(EMPLOYEE_KEY, initialEmployees));
+  const cleanEmployees = sourceEmployees.map(clearEmployeeTargets);
+
   if (!firebaseReady || !db) {
-    saveLocal(EMPLOYEE_KEY, initialEmployees);
-    saveLocal(RECORD_KEY, initialRecords());
+    syncDeletedBaseIdsFromEmployees(cleanEmployees);
+    saveLocal(EMPLOYEE_BACKUP_KEY, {
+      savedAt: Date.now(),
+      employees: sourceEmployees
+    });
+    saveLocal(EMPLOYEE_KEY, cleanEmployees);
+    saveLocal(RECORD_KEY, []);
     emitLocalSnapshot();
     return;
   }
 
-  const employeesSnapshot = await getDocs(collection(db, "employees"));
-  if (employeesSnapshot.empty) {
-    await Promise.all(initialEmployees.map((employee) => setDoc(doc(db, "employees", employee.id), employee)));
-  }
+  await Promise.all(cleanEmployees.map((employee) => setDoc(doc(db, "employees", employee.id), employee)));
 
   const recordsSnapshot = await getDocs(collection(db, "records"));
-  if (recordsSnapshot.empty) {
-    await Promise.all(initialRecords().map((record) => setDoc(doc(db, "records", record.id), record)));
-  }
+  await Promise.all(recordsSnapshot.docs.map((item) => deleteDoc(doc(db, "records", item.id))));
 }
 
 export async function addRecord(record) {
@@ -200,6 +240,12 @@ export async function addRecord(record) {
 }
 
 export async function saveEmployee(employee) {
+  if (baseEmployeeIds.has(employee.id)) {
+    const deletedEmployeeIds = loadDeletedEmployeeIds();
+    deletedEmployeeIds.delete(employee.id);
+    saveDeletedEmployeeIds(deletedEmployeeIds);
+  }
+
   if (!firebaseReady || !db) {
     const current = protectEmployeeList(loadLocal(EMPLOYEE_KEY, initialEmployees));
     if (!current.length && initialEmployees.length) {
@@ -214,10 +260,6 @@ export async function saveEmployee(employee) {
     const exists = current.some((item) => item.id === employee.id);
     const next = protectEmployeeList(exists ? current.map((item) => (item.id === employee.id ? employee : item)) : [...current, employee]);
 
-    if (next.length < initialEmployees.length) {
-      throw new Error("检测到覆盖风险，已阻止保存");
-    }
-
     saveLocal(EMPLOYEE_KEY, next);
     emitLocalSnapshot();
     return;
@@ -227,11 +269,17 @@ export async function saveEmployee(employee) {
 
 export async function removeEmployee(employeeId) {
   if (baseEmployeeIds.has(employeeId)) {
-    throw new Error("基础员工不能删除");
+    const deletedEmployeeIds = loadDeletedEmployeeIds();
+    deletedEmployeeIds.add(employeeId);
+    saveDeletedEmployeeIds(deletedEmployeeIds);
   }
   if (!firebaseReady || !db) {
     const current = protectEmployeeList(loadLocal(EMPLOYEE_KEY, initialEmployees));
-    saveLocal(EMPLOYEE_KEY, protectEmployeeList(current.filter((item) => item.id !== employeeId)));
+    saveLocal(EMPLOYEE_BACKUP_KEY, {
+      savedAt: Date.now(),
+      employees: current
+    });
+    saveLocal(EMPLOYEE_KEY, current.filter((item) => item.id !== employeeId));
     emitLocalSnapshot();
     return;
   }

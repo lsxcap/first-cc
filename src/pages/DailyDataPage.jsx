@@ -74,12 +74,14 @@ function EmployeeStatusDetail({ employee, records, selectedDate, onClose, adminU
             <button className={mode === "daily" ? "active" : ""} onClick={() => setMode("daily")}>日报</button>
             <button className={mode === "monthly" ? "active" : ""} onClick={() => setMode("monthly")}>月报</button>
           </div>
-          {mode === "daily" && adminUnlocked && onReopenFill && hasDailyRecords && (
-            <button type="button" className="inline-edit inline-edit-secondary" onClick={() => onReopenFill(employee, selectedDate)}>删除当日填报</button>
-          )}
           {onClose && <button className="close-button" onClick={onClose} aria-label="关闭个人信息">×</button>}
         </div>
       </div>
+      {mode === "daily" && adminUnlocked && onReopenFill && hasDailyRecords && (
+        <div className="personal-admin-row">
+          <button type="button" className="inline-edit inline-edit-secondary delete-day-button" onClick={() => onReopenFill(employee, selectedDate)}>删除当日填报</button>
+        </div>
+      )}
       {mode === "daily" ? (
         <div className="contrib-list">
           {hasDailyRecords ? dailyRecords.map((record) => (
@@ -101,6 +103,7 @@ function EmployeeStatusDetail({ employee, records, selectedDate, onClose, adminU
             const actual = monthlyStat?.actuals[row.key] || 0;
             const rate = row.target ? Math.min(actual / row.target, 1.5) : 0;
             const remain = row.target - actual;
+            const completionText = row.target ? `完成率 ${formatNumber(rate * 100)}%` : "未设置指标";
             const remainText = remain > 0
               ? `还差 ${formatNumber(remain)} ${indicatorUnits[row.key]}`
               : remain < 0
@@ -110,12 +113,12 @@ function EmployeeStatusDetail({ employee, records, selectedDate, onClose, adminU
               <div className="rush-item" key={row.key}>
                 <div className="rush-label">
                   <span>{row.label}</span>
-                  <strong>{formatNumber(actual)} / {formatNumber(row.target)} {indicatorUnits[row.key]}</strong>
+                  <strong>实际 {formatNumber(actual)} / 指标 {formatNumber(row.target)} {indicatorUnits[row.key]}</strong>
                 </div>
                 <div className="rush-track">
-                  <div className={actual >= row.target ? "over" : ""} style={{ width: `${Math.min(rate * 100, 100)}%` }} />
+                  <div className={row.target > 0 && actual >= row.target ? "over" : ""} style={{ width: `${Math.min(rate * 100, 100)}%` }} />
                 </div>
-                <div className="rush-remain">{remainText}</div>
+                <div className="rush-remain">{completionText} · {row.target ? remainText : "请在员工管理中配置"}</div>
               </div>
             );
           })}

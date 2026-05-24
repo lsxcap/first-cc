@@ -1,14 +1,39 @@
 import { useRef, useState } from "react";
 import { getEmployeeBackupMeta, restoreEmployeesFromBackup } from "../services/dataService.js";
-import { indicatorRowsFor } from "../utils/metrics.js";
+import { indicatorLabels } from "../config/data.js";
 import OptionPicker from "../components/OptionPicker.jsx";
 
-export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee, onSeed, isAdmin, onSetAdmin }) {
+const REQUIRED_TARGET_KEYS = ["validAccount", "newAsset", "investSign", "twoMarginValid", "productSales"];
+const EXTRA_TARGET_KEYS = ["twoMarginNew"];
+
+function targetRowsForEdit(employee) {
+  const keys = employee.group === "新人组"
+    ? [...REQUIRED_TARGET_KEYS, ...EXTRA_TARGET_KEYS]
+    : REQUIRED_TARGET_KEYS;
+  return keys.map((key) => ({
+    key,
+    label: indicatorLabels[key],
+    target: employee.targets?.[key] || 0
+  }));
+}
+
+function normalizeEmployeeTargets(employee) {
+  const targetKeys = [...REQUIRED_TARGET_KEYS, ...EXTRA_TARGET_KEYS];
+  return {
+    ...employee,
+    targets: targetKeys.reduce((next, key) => {
+      next[key] = Number(employee.targets?.[key] || 0);
+      return next;
+    }, {})
+  };
+}
+
+export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee, onInitializeProductionData, isAdmin, onSetAdmin }) {
   const makeNewEmployee = () => ({
-    id: `e${Date.now()}`,
+    id: `employee-${globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : Date.now()}`,
     name: "",
     group: "老人组",
-    targets: { validAccount: 7, newAsset: 100, investSign: 7, twoMarginValid: 1, productSales: 70, twoMarginNew: 0 }
+    targets: { validAccount: 0, newAsset: 0, investSign: 0, twoMarginValid: 0, productSales: 0, twoMarginNew: 0 }
   });
 
   const [editingEmployee, setEditingEmployee] = useState(null);
@@ -24,7 +49,7 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
 
   const employee = editingEmployee || draftEmployee;
   const isEditing = Boolean(editingEmployee);
-  const rows = indicatorRowsFor(employee);
+  const rows = targetRowsForEdit(employee);
   const groups = ["老人组", "新人组"].map((group) => ({
     group,
     employees: employees.filter((item) => item.group === group)
@@ -72,27 +97,33 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
     if (saveState === "saving") return;
     setSaveState("saving");
     try {
-      await onSaveEmployee(employee);
+      await onSaveEmployee(normalizeEmployeeTargets(employee));
       setBackupMeta(getEmployeeBackupMeta());
       setSaveState("success");
       window.setTimeout(() => {
         closeForm();
       }, 1200);
-    } catch {
+    } catch (err) {
       setSaveState("idle");
-      alert("保存失败，请重试");
+      alert(err?.message || "保存失败，请重试");
     }
   }
 
-  async function guardedSeed() {
+  async function initializeFormalData() {
     if (!unlocked) return;
-    const answer = prompt("此操作会重置为样例数据。请输入“确认重置”继续：", "");
-    if (answer !== "确认重置") {
-      alert("已取消重置");
+    const answer = prompt("此操作会保留员工姓名和分组，清空所有日报、月报、积分、备注和员工指标。请输入“确认初始化”继续：", "");
+    if (answer !== "确认初始化") {
+      alert("已取消初始化");
       return;
     }
-    await onSeed();
-    alert("已重置为样例数据");
+    try {
+      await onInitializeProductionData(employees);
+      setBackupMeta(getEmployeeBackupMeta());
+      closeForm();
+      alert("已初始化为正式环境数据");
+    } catch (err) {
+      alert(err?.message || "初始化失败，请重试");
+    }
   }
 
   function restoreBackup() {
@@ -114,7 +145,15 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
 
   async function guardedRemove(employeeId) {
     if (!unlocked) return;
-    if (confirm("确认删除这个员工？")) await onRemoveEmployee(employeeId);
+    const employee = employees.find((item) => item.id === employeeId);
+    if (!confirm(`确认删除${employee?.name ? ` ${employee.name} ` : "该员工"}吗？\n删除后该员工将从员工管理、今日填报、每日数据、月度看板中移除。`)) return;
+    try {
+      await onRemoveEmployee(employeeId);
+      setBackupMeta(getEmployeeBackupMeta());
+      if (editingEmployee?.id === employeeId) closeForm();
+    } catch (err) {
+      alert(err?.message || "删除失败，请重试");
+    }
   }
 
   return (
@@ -128,7 +167,7 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
           {unlocked && (
             <div className="panel-actions admin-actions-group">
               <button type="button" className="primary action-main" onClick={openCreate}>新增员工</button>
-              <button type="button" className="ghost action-secondary" onClick={guardedSeed}>初始化样例</button>
+              <button type="button" className="ghost action-secondary" onClick={initializeFormalData}>初始化正式环境</button>
               <button type="button" className="ghost action-secondary" onClick={restoreBackup}>恢复员工备份</button>
             </div>
           )}
@@ -153,11 +192,24 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
               <div className="employee-list">
                 {groupEmployees.map((item) => (
                   <div className="employee-row" key={item.id}>
-                    <strong>{item.name}</strong>
+                    <strong className="employee-name">{item.name}</strong>
                     {unlocked && (
                       <div className="row-actions">
-                        <button onClick={() => openEdit(item)}>编辑</button>
-                        <button onClick={() => guardedRemove(item.id)}>删除</button>
+                        <button type="button" className="employee-action-button" onClick={() => openEdit(item)} aria-label={`编辑员工 ${item.name}`} title="编辑员工">
+                          <svg aria-hidden="true" viewBox="0 0 24 24">
+                            <path d="M4 20h4.2L19 9.2 14.8 5 4 15.8V20Z" />
+                            <path d="m13.8 6 4.2 4.2" />
+                          </svg>
+                        </button>
+                        <button type="button" className="employee-action-button danger" onClick={() => guardedRemove(item.id)} aria-label={`删除员工 ${item.name}`} title="删除员工">
+                          <svg aria-hidden="true" viewBox="0 0 24 24">
+                            <path d="M5 7h14" />
+                            <path d="M10 11v6" />
+                            <path d="M14 11v6" />
+                            <path d="M8 7l1-3h6l1 3" />
+                            <path d="M7 7l1 13h8l1-13" />
+                          </svg>
+                        </button>
                       </div>
                     )}
                   </div>
@@ -205,21 +257,29 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
                 placeholder="选择组别"
               />
             </label>
-            {rows.map((row) => (
-              <label key={row.key}>
-                {row.label}指标
-                <input
-                  type="number"
-                  step="any"
-                  value={employee.targets[row.key] || 0}
-                  onChange={(event) => {
-                    const next = { ...employee, targets: { ...employee.targets, [row.key]: Number(event.target.value || 0) } };
-                    if (isEditing) setEditingEmployee(next);
-                    else setDraftEmployee(next);
-                  }}
-                />
-              </label>
-            ))}
+            <div className="target-config-section wide">
+              <div className="target-config-title">
+                <h3>个人月度指标</h3>
+                <span>保存后同步到每日数据月报和月度看板</span>
+              </div>
+              <div className="target-config-grid">
+                {rows.map((row) => (
+                  <label key={row.key}>
+                    {row.label}指标
+                    <input
+                      type="number"
+                      step="any"
+                      value={employee.targets?.[row.key] || 0}
+                      onChange={(event) => {
+                        const next = { ...employee, targets: { ...employee.targets, [row.key]: Number(event.target.value || 0) } };
+                        if (isEditing) setEditingEmployee(next);
+                        else setDraftEmployee(next);
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
             <button className={`primary wide ${saveState === "success" ? "success" : ""}`} disabled={saveState === "saving" || saveState === "success"}>
               {saveState === "saving" ? "保存中..." : saveState === "success" ? "✓ 保存成功" : "保存"}
             </button>
