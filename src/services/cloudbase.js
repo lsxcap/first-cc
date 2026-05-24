@@ -14,11 +14,11 @@ export const db = app ? app.database() : null;
 
 export async function ensureRemoteSession() {
   if (!auth) return null;
-  const currentUser = auth.currentUser;
-  if (currentUser) return currentUser;
+  const currentState = await auth.hasLoginState?.();
+  if (currentState) return currentState;
   const result = await auth.signInAnonymously();
   if (result?.error) throw result.error;
-  return result?.data?.user || null;
+  return result?.data || auth.getLoginState?.() || null;
 }
 
 export function remoteNow() {

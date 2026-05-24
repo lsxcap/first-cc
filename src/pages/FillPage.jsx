@@ -232,7 +232,7 @@ export default function FillPage({ employees, records, onAddRecord, adminUnlocke
     : submitSuccessVisible
       ? submitState === "queued"
         ? "✓ 已暂存，待同步"
-        : `✓ ${selectedEmployee?.name || "该员工"}已提交`
+        : `✓ ${selectedEmployee?.name || "该员工"}已提交到云端`
       : isSubmittedEmployee
         ? "已提交"
         : allSubmitted
@@ -243,7 +243,7 @@ export default function FillPage({ employees, records, onAddRecord, adminUnlocke
   const successHint = submitSuccessVisible
     ? submitState === "queued"
       ? "✓ 已暂存，网络恢复后自动同步"
-      : "✓ 已提交，正在切换下一位"
+      : "✓ 已提交到云端，正在切换下一位"
     : "";
 
   return (

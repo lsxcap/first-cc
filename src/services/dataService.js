@@ -67,14 +67,6 @@ function loadPendingRecords() {
   return loadLocal(RECORD_KEY, initialRecords()).filter((record) => record.syncStatus === "pending");
 }
 
-function mergeRemoteWithPending(remoteRecords) {
-  const byId = new Map(remoteRecords.map((record) => [record.id, record]));
-  for (const record of loadPendingRecords()) {
-    byId.set(record.id, record);
-  }
-  return [...byId.values()].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
-}
-
 function cleanRemoteRecord(record) {
   const remoteRecord = { ...record };
   delete remoteRecord.syncStatus;
@@ -217,6 +209,16 @@ function emitLocalSnapshot() {
   });
 }
 
+function refreshRemoteSubscribers() {
+  remoteRefreshers.forEach((refresh) => {
+    try {
+      refresh();
+    } catch {
+      // Ignore listener errors.
+    }
+  });
+}
+
 export function loadLocalSnapshot() {
   const employees = protectEmployeeList(loadLocal(EMPLOYEE_KEY, initialEmployees));
   saveLocal(EMPLOYEE_KEY, employees);
@@ -275,15 +277,14 @@ export function subscribeData(onData, onError) {
         ? protectEmployeeList(employeeDocs, { restoreMissingBase: false, useDeletedIds: false })
         : initialEmployees.map(normalizeEmployee);
       records = recordDocs.length ? recordDocs : initialRecords();
-      onData({ employees, records: mergeRemoteWithPending(records) });
+      onData({ employees, records });
       syncPendingRecords().catch(onError);
     } catch (err) {
       if (!active) return;
       onError?.(err);
-      const localSnapshot = loadLocalSnapshot();
       onData({
-        employees: employees.length ? employees : localSnapshot.employees,
-        records: mergeRemoteWithPending(records.length ? records : localSnapshot.records)
+        employees: employees.length ? employees : initialEmployees.map(normalizeEmployee),
+        records
       });
     } finally {
       refreshing = false;
@@ -329,7 +330,7 @@ export async function syncPendingRecords() {
   const syncedIds = new Set(pendingRecords.map((record) => record.id));
   const remainingLocalRecords = loadLocal(RECORD_KEY, initialRecords()).filter((record) => !syncedIds.has(record.id));
   saveLocal(RECORD_KEY, remainingLocalRecords);
-  emitLocalSnapshot();
+  refreshRemoteSubscribers();
   return { synced, pending: remainingLocalRecords.filter((record) => record.syncStatus === "pending").length };
 }
 
@@ -358,6 +359,7 @@ export async function initializeProductionData() {
 
   const recordsSnapshot = await getRemoteCollection("records");
   await Promise.all(recordsSnapshot.map((item) => withTimeout(remoteDoc("records", item.id).remove(), REMOTE_TIMEOUT_MS)));
+  refreshRemoteSubscribers();
 }
 
 export async function addRecord(record) {
@@ -381,6 +383,7 @@ export async function addRecord(record) {
       }),
       REMOTE_TIMEOUT_MS
     );
+    refreshRemoteSubscribers();
     return { status: "remote", record: localRecord };
   } catch (err) {
     saveLocalRecord({
@@ -420,6 +423,7 @@ export async function saveEmployee(employee) {
     return;
   }
   await withTimeout(remoteDoc("employees", employee.id).set(employee), REMOTE_TIMEOUT_MS);
+  refreshRemoteSubscribers();
 }
 
 export async function removeEmployee(employeeId) {
@@ -439,6 +443,7 @@ export async function removeEmployee(employeeId) {
     return;
   }
   await withTimeout(remoteDoc("employees", employeeId).remove(), REMOTE_TIMEOUT_MS);
+  refreshRemoteSubscribers();
 }
 
 export async function updateRecord(recordId, patch) {
@@ -449,6 +454,7 @@ export async function updateRecord(recordId, patch) {
     return;
   }
   await withTimeout(remoteDoc("records", recordId).update(patch), REMOTE_TIMEOUT_MS);
+  refreshRemoteSubscribers();
 }
 
 export async function removeRecordsByEmployeeDate(employeeId, date) {
@@ -465,4 +471,5 @@ export async function removeRecordsByEmployeeDate(employeeId, date) {
   );
   const targets = (result?.data || []).map(normalizeRemoteRow);
   await Promise.all(targets.map((item) => withTimeout(remoteDoc("records", item.id).remove(), REMOTE_TIMEOUT_MS)));
+  refreshRemoteSubscribers();
 }
