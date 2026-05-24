@@ -117,7 +117,7 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
       return;
     }
     try {
-      await onInitializeProductionData(employees);
+      await onInitializeProductionData();
       setBackupMeta(getEmployeeBackupMeta());
       closeForm();
       alert("已初始化为正式环境数据");
@@ -167,7 +167,7 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
           {unlocked && (
             <div className="panel-actions admin-actions-group">
               <button type="button" className="primary action-main" onClick={openCreate}>新增员工</button>
-              <button type="button" className="ghost action-secondary" onClick={initializeFormalData}>初始化正式环境</button>
+              <button type="button" className="ghost action-secondary" onClick={initializeFormalData}>初始化</button>
               <button type="button" className="ghost action-secondary" onClick={restoreBackup}>恢复员工备份</button>
             </div>
           )}
@@ -269,7 +269,8 @@ export default function ManagePage({ employees, onSaveEmployee, onRemoveEmployee
                     <input
                       type="number"
                       step="any"
-                      value={employee.targets?.[row.key] || 0}
+                      value={Number(employee.targets?.[row.key] || 0) === 0 ? "" : employee.targets[row.key]}
+                      placeholder="0"
                       onChange={(event) => {
                         const next = { ...employee, targets: { ...employee.targets, [row.key]: Number(event.target.value || 0) } };
                         if (isEditing) setEditingEmployee(next);

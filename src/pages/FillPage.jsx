@@ -204,11 +204,12 @@ export default function FillPage({ employees, records, onAddRecord, adminUnlocke
         setSubmitState("idle");
         return;
       }
-      await Promise.all(created);
+      const results = await Promise.all(created);
+      const queued = results.some((result) => result?.status === "queued");
       setValues({});
       setEmptyCount("");
       setNote("");
-      setSubmitState("success");
+      setSubmitState(queued ? "queued" : "success");
       setSubmitSuccessVisible(true);
       const submittedEmployeeId = employeeId;
       window.setTimeout(() => {
@@ -216,7 +217,7 @@ export default function FillPage({ employees, records, onAddRecord, adminUnlocke
         setEmployeeId(nextEmployee?.id || submittedEmployeeId);
         setSubmitSuccessVisible(false);
         setSubmitState("idle");
-      }, 1400);
+      }, queued ? 2200 : 1400);
     } catch {
       setSubmitState("idle");
     }
@@ -229,7 +230,9 @@ export default function FillPage({ employees, records, onAddRecord, adminUnlocke
   const submitLabel = submitState === "submitting"
     ? "提交中..."
     : submitSuccessVisible
-      ? `✓ ${selectedEmployee?.name || "该员工"}已提交`
+      ? submitState === "queued"
+        ? "✓ 已暂存，待同步"
+        : `✓ ${selectedEmployee?.name || "该员工"}已提交`
       : isSubmittedEmployee
         ? "已提交"
         : allSubmitted
@@ -237,7 +240,11 @@ export default function FillPage({ employees, records, onAddRecord, adminUnlocke
         : "提交业绩记录";
 
   const selectedMeta = `待填写 ${pendingEmployees.length}/${employees.length}`;
-  const successHint = submitSuccessVisible ? "✓ 已提交，正在切换下一位" : "";
+  const successHint = submitSuccessVisible
+    ? submitState === "queued"
+      ? "✓ 已暂存，网络恢复后自动同步"
+      : "✓ 已提交，正在切换下一位"
+    : "";
 
   return (
     <div className="page-grid">

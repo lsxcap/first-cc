@@ -11,7 +11,9 @@ import {
   removeEmployee,
   removeRecordsByEmployeeDate,
   saveEmployee,
+  subscribeLocalData,
   subscribeData,
+  syncPendingRecords,
   updateRecord
 } from "./services/dataService.js";
 import { useAdminSession } from "./hooks/useAdminSession.js";
@@ -31,6 +33,16 @@ function AdminBadge({ adminUnlocked, adminLoginTime, onExit }) {
   );
 }
 
+function withTimeout(promise, timeoutMs, message = "远程服务连接超时") {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) window.clearTimeout(timer);
+  });
+}
+
 export default function App() {
   const [data, setData] = useState({ employees: initialEmployees, records: initialRecords() });
   const [page, setPage] = useState("fill");
@@ -39,35 +51,39 @@ export default function App() {
 
   useEffect(() => {
     let unsubscribe = () => {};
+    let retryTimer = null;
     let cancelled = false;
 
     async function connect() {
       try {
-        if (firebaseReady) await ensureAnonymousSession();
+        if (firebaseReady) await withTimeout(ensureAnonymousSession(), 6000, "远程登录超时，已启用本地暂存");
         if (!cancelled) unsubscribe = subscribeData(setData, (err) => setError(err.message));
       } catch (err) {
-        setError(err.message);
-        unsubscribe = subscribeData(setData, (fallbackErr) => setError(fallbackErr.message));
+        if (cancelled) return;
+        setError(`${err.message}。当前提交会先暂存，网络恢复后自动补传。`);
+        unsubscribe = subscribeLocalData(setData);
+        retryTimer = window.setInterval(async () => {
+          try {
+            if (firebaseReady) await withTimeout(ensureAnonymousSession(), 6000);
+            await syncPendingRecords();
+            if (cancelled) return;
+            unsubscribe();
+            unsubscribe = subscribeData(setData, (fallbackErr) => setError(fallbackErr.message));
+            setError("");
+            window.clearInterval(retryTimer);
+          } catch {
+            // Keep local queue active until the remote service is reachable.
+          }
+        }, 15000);
       }
     }
 
     connect();
     return () => {
       cancelled = true;
+      if (retryTimer) window.clearInterval(retryTimer);
       unsubscribe();
     };
-  }, []);
-
-  useEffect(() => {
-    const restoreViewport = (event) => {
-      const target = event.target;
-      const tagName = target?.tagName;
-      if (tagName !== "INPUT" && tagName !== "TEXTAREA" && tagName !== "SELECT") return;
-      window.setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: "smooth" }), 0);
-    };
-
-    window.addEventListener("focusout", restoreViewport);
-    return () => window.removeEventListener("focusout", restoreViewport);
   }, []);
 
   const employees = data.employees.length ? data.employees : [];

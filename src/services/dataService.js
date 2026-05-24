@@ -1,5 +1,4 @@
 import {
-  addDoc,
   collection,
   deleteDoc,
   doc,
@@ -14,13 +13,15 @@ import {
 import { db, firebaseReady } from "../services/firebase.js";
 import { emptyTargets, initialEmployees, initialRecords } from "../config/data.js";
 
-const STORAGE_VERSION = "v4";
+const STORAGE_VERSION = "v5";
 const EMPLOYEE_KEY = `juan_workbench_employees_${STORAGE_VERSION}`;
 const EMPLOYEE_BACKUP_KEY = `juan_workbench_employees_backup_${STORAGE_VERSION}`;
 const DELETED_EMPLOYEE_KEY = `juan_workbench_deleted_employees_${STORAGE_VERSION}`;
 const RECORD_KEY = `juan_workbench_records_${STORAGE_VERSION}`;
+const REMOTE_TIMEOUT_MS = 8000;
 
 const localSubscribers = new Set();
+const remoteRefreshers = new Set();
 const baseEmployeeIds = new Set(initialEmployees.map((employee) => employee.id));
 
 function loadLocal(key, fallback) {
@@ -36,6 +37,61 @@ function loadLocal(key, fallback) {
 
 function saveLocal(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function withTimeout(promise, timeoutMs, message = "远程服务连接超时") {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) window.clearTimeout(timer);
+  });
+}
+
+function makeRecordId(record) {
+  const source = `${record.employeeId || "employee"}_${record.date || "date"}_${record.indicator || "metric"}`;
+  return source.replace(/[^\w-]/g, "_");
+}
+
+function normalizeRecordForLocal(record, patch = {}) {
+  const id = record.id || record.clientMutationId || makeRecordId(record);
+  return {
+    ...record,
+    id,
+    clientMutationId: id,
+    ...patch
+  };
+}
+
+function saveLocalRecord(record) {
+  const current = loadLocal(RECORD_KEY, initialRecords());
+  const nextRecord = normalizeRecordForLocal(record);
+  const exists = current.some((item) => item.id === nextRecord.id);
+  const next = exists
+    ? current.map((item) => (item.id === nextRecord.id ? { ...item, ...nextRecord } : item))
+    : [nextRecord, ...current];
+  saveLocal(RECORD_KEY, next);
+}
+
+function loadPendingRecords() {
+  return loadLocal(RECORD_KEY, initialRecords()).filter((record) => record.syncStatus === "pending");
+}
+
+function mergeRemoteWithPending(remoteRecords) {
+  const byId = new Map(remoteRecords.map((record) => [record.id, record]));
+  for (const record of loadPendingRecords()) {
+    byId.set(record.id, record);
+  }
+  return [...byId.values()].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+}
+
+function cleanRemoteRecord(record) {
+  const remoteRecord = { ...record };
+  delete remoteRecord.syncStatus;
+  delete remoteRecord.syncError;
+  delete remoteRecord.queuedAt;
+  return remoteRecord;
 }
 
 function normalizeEmployeeList(value) {
@@ -126,6 +182,13 @@ function emitLocalSnapshot() {
       // Ignore listener errors.
     }
   });
+  remoteRefreshers.forEach((refresh) => {
+    try {
+      refresh();
+    } catch {
+      // Ignore listener errors.
+    }
+  });
 }
 
 export function loadLocalSnapshot() {
@@ -165,11 +228,7 @@ export function restoreEmployeesFromBackup() {
 
 export function subscribeData(onData, onError) {
   if (!firebaseReady || !db) {
-    onData(loadLocalSnapshot());
-    localSubscribers.add(onData);
-    return () => {
-      localSubscribers.delete(onData);
-    };
+    return subscribeLocalData(onData);
   }
 
   let employees = [];
@@ -178,8 +237,12 @@ export function subscribeData(onData, onError) {
   let readyRecords = false;
 
   const emit = () => {
-    if (readyEmployees && readyRecords) onData({ employees, records });
+    if (readyEmployees && readyRecords) {
+      onData({ employees, records: mergeRemoteWithPending(records) });
+      syncPendingRecords().catch(onError);
+    }
   };
+  remoteRefreshers.add(emit);
 
   const unsubEmployees = onSnapshot(
     query(collection(db, "employees"), orderBy("name")),
@@ -202,20 +265,53 @@ export function subscribeData(onData, onError) {
   );
 
   return () => {
+    remoteRefreshers.delete(emit);
     unsubEmployees();
     unsubRecords();
   };
 }
 
-export async function initializeProductionData(employees = []) {
-  const sourceEmployees = protectEmployeeList(employees.length ? employees : loadLocal(EMPLOYEE_KEY, initialEmployees));
+export function subscribeLocalData(onData) {
+  onData(loadLocalSnapshot());
+  localSubscribers.add(onData);
+  return () => {
+    localSubscribers.delete(onData);
+  };
+}
+
+export async function syncPendingRecords() {
+  if (!firebaseReady || !db) return { synced: 0, pending: loadPendingRecords().length };
+  const pendingRecords = loadPendingRecords();
+  if (!pendingRecords.length) return { synced: 0, pending: 0 };
+
+  let synced = 0;
+  for (const record of pendingRecords) {
+    await withTimeout(
+      setDoc(doc(db, "records", record.id), {
+        ...cleanRemoteRecord(record),
+        syncedAt: serverTimestamp()
+      }, { merge: true }),
+      REMOTE_TIMEOUT_MS
+    );
+    synced += 1;
+  }
+
+  const syncedIds = new Set(pendingRecords.map((record) => record.id));
+  const remainingLocalRecords = loadLocal(RECORD_KEY, initialRecords()).filter((record) => !syncedIds.has(record.id));
+  saveLocal(RECORD_KEY, remainingLocalRecords);
+  emitLocalSnapshot();
+  return { synced, pending: remainingLocalRecords.filter((record) => record.syncStatus === "pending").length };
+}
+
+export async function initializeProductionData() {
+  const sourceEmployees = initialEmployees.map(normalizeEmployee);
   const cleanEmployees = sourceEmployees.map(clearEmployeeTargets);
 
   if (!firebaseReady || !db) {
-    syncDeletedBaseIdsFromEmployees(cleanEmployees);
+    saveDeletedEmployeeIds(new Set());
     saveLocal(EMPLOYEE_BACKUP_KEY, {
       savedAt: Date.now(),
-      employees: sourceEmployees
+      employees: protectEmployeeList(loadLocal(EMPLOYEE_KEY, initialEmployees))
     });
     saveLocal(EMPLOYEE_KEY, cleanEmployees);
     saveLocal(RECORD_KEY, []);
@@ -223,20 +319,49 @@ export async function initializeProductionData(employees = []) {
     return;
   }
 
-  await Promise.all(cleanEmployees.map((employee) => setDoc(doc(db, "employees", employee.id), employee)));
+  const employeesSnapshot = await getDocs(collection(db, "employees"));
+  const customEmployeeDocs = employeesSnapshot.docs.filter((item) => !baseEmployeeIds.has(item.id));
+  await Promise.all([
+    ...customEmployeeDocs.map((item) => deleteDoc(doc(db, "employees", item.id))),
+    ...cleanEmployees.map((employee) => setDoc(doc(db, "employees", employee.id), employee))
+  ]);
 
   const recordsSnapshot = await getDocs(collection(db, "records"));
   await Promise.all(recordsSnapshot.docs.map((item) => deleteDoc(doc(db, "records", item.id))));
 }
 
 export async function addRecord(record) {
+  const localRecord = normalizeRecordForLocal(record);
   if (!firebaseReady || !db) {
-    const current = loadLocal(RECORD_KEY, initialRecords());
-    saveLocal(RECORD_KEY, [{ ...record, id: `local-${Date.now()}` }, ...current]);
+    saveLocalRecord({
+      ...localRecord,
+      syncStatus: "pending",
+      syncError: "远程数据库未配置，已保存在本机",
+      queuedAt: Date.now()
+    });
     emitLocalSnapshot();
-    return;
+    return { status: "queued", record: localRecord };
   }
-  await addDoc(collection(db, "records"), { ...record, createdAt: serverTimestamp() });
+
+  try {
+    await withTimeout(
+      setDoc(doc(db, "records", localRecord.id), {
+        ...cleanRemoteRecord(localRecord),
+        createdAt: serverTimestamp()
+      }, { merge: true }),
+      REMOTE_TIMEOUT_MS
+    );
+    return { status: "remote", record: localRecord };
+  } catch (err) {
+    saveLocalRecord({
+      ...localRecord,
+      syncStatus: "pending",
+      syncError: err?.message || "远程数据库暂时不可用",
+      queuedAt: Date.now()
+    });
+    emitLocalSnapshot();
+    return { status: "queued", record: localRecord };
+  }
 }
 
 export async function saveEmployee(employee) {
