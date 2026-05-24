@@ -58,6 +58,18 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const restoreViewport = (event) => {
+      const target = event.target;
+      const tagName = target?.tagName;
+      if (tagName !== "INPUT" && tagName !== "TEXTAREA" && tagName !== "SELECT") return;
+      window.setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: "smooth" }), 0);
+    };
+
+    window.addEventListener("focusout", restoreViewport);
+    return () => window.removeEventListener("focusout", restoreViewport);
+  }, []);
+
   const employees = data.employees.length ? data.employees : [];
   const records = data.records;
 

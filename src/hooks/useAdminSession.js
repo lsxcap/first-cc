@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ADMIN_ACTIVE_AT_KEY, ADMIN_SESSION_KEY, ADMIN_TIMEOUT_MS, APP_ROLES } from "../config/constants.js";
+import { ADMIN_ACTIVE_AT_KEY, ADMIN_SESSION_KEY, ADMIN_TIMEOUT_MS, APP_ROLES, TEMP_ADMIN_DEBUG } from "../config/constants.js";
 
 function readAdminSession() {
   try {
@@ -23,8 +23,8 @@ function writeAdminSession(isAdmin) {
 
 export function useAdminSession() {
   const initialSession = readAdminSession();
-  const [role, setRole] = useState(initialSession.role);
-  const [adminLoginTime, setAdminLoginTime] = useState(initialSession.lastActiveAt || 0);
+  const [role, setRole] = useState(TEMP_ADMIN_DEBUG ? APP_ROLES.ADMIN : initialSession.role);
+  const [adminLoginTime, setAdminLoginTime] = useState(TEMP_ADMIN_DEBUG ? Date.now() : initialSession.lastActiveAt || 0);
 
   const isAdmin = role === APP_ROLES.ADMIN;
 

@@ -292,23 +292,23 @@ export default function FillPage({ employees, records, onAddRecord, adminUnlocke
                   onChange={(value) => updateValue("validAccount", value)}
                 />
                 <label className="form-field">
-                  产品销售额-私募
+                  私募
                   <div className="input-unit">
-                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.privateFund || ""} onChange={(event) => updateValue("privateFund", event.target.value.replace(/[^\d.]/g, ""))} placeholder="0" />
+                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.privateFund || ""} onChange={(event) => updateValue("privateFund", event.target.value.replace(/[^\d.]/g, ""))} placeholder="请输入金额" />
                     <span>万元</span>
                   </div>
                 </label>
                 <label className="form-field">
                   空户
                   <div className="input-unit">
-                    <input type="text" inputMode="numeric" enterKeyHint="next" value={emptyCount} onChange={(event) => setEmptyCount(event.target.value.replace(/\D/g, ""))} placeholder="0" />
+                    <input type="text" inputMode="numeric" enterKeyHint="next" value={emptyCount} onChange={(event) => setEmptyCount(event.target.value.replace(/\D/g, ""))} placeholder="请输入数量" />
                     <span>户</span>
                   </div>
                 </label>
                 <label className="form-field">
-                  产品销售额-公募
+                  公募
                   <div className="input-unit">
-                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.publicFund || ""} onChange={(event) => updateValue("publicFund", event.target.value.replace(/[^\d.]/g, ""))} placeholder="0" />
+                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.publicFund || ""} onChange={(event) => updateValue("publicFund", event.target.value.replace(/[^\d.]/g, ""))} placeholder="请输入金额" />
                     <span>万元</span>
                   </div>
                 </label>
@@ -319,9 +319,9 @@ export default function FillPage({ employees, records, onAddRecord, adminUnlocke
                   onChange={(value) => updateValue(marginKey, value)}
                 />
                 <label className="form-field">
-                  产品销售额-收凭
+                  收凭
                   <div className="input-unit">
-                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.receipt || ""} onChange={(event) => updateValue("receipt", event.target.value.replace(/[^\d.]/g, ""))} placeholder="0" />
+                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.receipt || ""} onChange={(event) => updateValue("receipt", event.target.value.replace(/[^\d.]/g, ""))} placeholder="请输入金额" />
                     <span>万元</span>
                   </div>
                 </label>
@@ -333,7 +333,7 @@ export default function FillPage({ employees, records, onAddRecord, adminUnlocke
                 <label className="form-field">
                   其他积分
                   <div className="input-unit">
-                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.extraT0 || ""} onChange={(event) => updateValue("extraT0", event.target.value.replace(/[^\d.]/g, ""))} placeholder="0" />
+                    <input type="text" inputMode="decimal" enterKeyHint="next" value={values.extraT0 || ""} onChange={(event) => updateValue("extraT0", event.target.value.replace(/[^\d.]/g, ""))} placeholder="请输入分数" />
                     <span>分</span>
                   </div>
                 </label>

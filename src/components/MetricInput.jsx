@@ -1,4 +1,4 @@
-export default function MetricInput({ label, unit, value, onChange, placeholder = "0" }) {
+export default function MetricInput({ label, unit, value, onChange, placeholder = "请输入数值" }) {
   return (
     <label className="form-field">
       {label}

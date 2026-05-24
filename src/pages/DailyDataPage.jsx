@@ -78,7 +78,6 @@ function EmployeeStatusDetail({ employee, records, selectedDate, onClose, adminU
             <button type="button" className="inline-edit inline-edit-secondary" onClick={() => onReopenFill(employee, selectedDate)}>删除当日填报</button>
           )}
           {onClose && <button className="close-button" onClick={onClose} aria-label="关闭个人信息">×</button>}
-          {adminUnlocked && <span className="admin-inline-tag">管理员可编辑/修正</span>}
         </div>
       </div>
       {mode === "daily" ? (

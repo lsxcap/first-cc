@@ -84,14 +84,12 @@ input, select, textarea {
   border-radius: 8px;
   padding: 12px 13px;
   outline: none;
-  transform: scale(1);
-  transform-origin: left center;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  font-size: 16px;
 }
 input:focus, select:focus, textarea:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
-  transform: scale(1.02);
 }
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
@@ -493,18 +491,18 @@ select {
 .work-form .picker-trigger,
 .work-form .picker-trigger span {
   color: #64748b;
-  font-size: 11px;
+  font-size: 16px;
   font-weight: 500;
   line-height: 1.25;
 }
 .work-form input::placeholder,
 .work-form textarea::placeholder {
-  color: #64748b;
-  font-size: 10px;
+  color: #999999;
+  font-size: 11px;
   font-weight: 500;
 }
 .form-field textarea::placeholder {
-  font-size: 10px;
+  font-size: 11px;
 }
 .work-form input[type="date"],
 .work-form .picker-trigger {
@@ -570,7 +568,7 @@ select {
   height: 44px;
   padding: 0 12px;
   color: #64748b;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 500;
   line-height: 1.25;
 }
@@ -587,11 +585,11 @@ select {
   position: relative;
   min-width: 0;
 }
-.input-unit input,
-.input-unit span,
+.input-unit input { font-size: 16px; }
+.input-unit span { font-size: 12px; }
 .form-field input::placeholder,
 .form-field textarea::placeholder {
-  font-size: 14px;
+  font-size: 11px;
 }
 .input-unit input { padding-right: 44px; }
 .input-unit span {
@@ -881,7 +879,7 @@ undefined.submit-wide {
   border: 1px solid #e2eaf5;
 }
 .admin-unlock label { display: grid; gap: 7px; font-size: 13px; font-weight: 700; color: #334155; }
-.admin-unlock input { padding: 9px 11px; font-size: 14px; }
+.admin-unlock input { padding: 9px 11px; font-size: 16px; }
 .admin-unlock .ghost { padding: 10px 12px; font-size: 13px; }
 .admin-unlock .error { grid-column: 1 / -1; }
 .picker {
@@ -1734,8 +1732,6 @@ tr:last-child td { border-bottom: 0; }
   .work-form textarea,
   .work-form .picker-trigger,
   .work-form .picker-trigger span,
-  .work-form input::placeholder,
-  .work-form textarea::placeholder,
   .date-compact {
     font-size: 16px;
   }
